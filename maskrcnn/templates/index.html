@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <title>Brain Segmentation Pipeline</title>
+    <!-- Latest compiled and minified CSS -->
+    <link rel="stylesheet" href="https://bootswatch.com/4/flatly/bootstrap.min.css">
+
+    <script src="https://code.jquery.com/jquery-3.1.1.slim.min.js" integrity="sha384-A7FZj7v+d/sdmMqp/nOQwliLvUsJfDHW+k9Omg/a/EheAdgtzNs3hpfag6Ed950n" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tether/1.4.0/js/tether.min.js" integrity="sha384-DztdAPBWPRXSA/3eYEEUWrWCy7G5KFbe8fFjk5JAIxUYHKkDx6Qin1DkWx51bBrb" crossorigin="anonymous"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-alpha.6/js/bootstrap.min.js" integrity="sha384-vBWWzlZJ8ea9aCX4pEW3rVHjgjt7zpkNpZk+02D9phzyeVkE+jo0ieGizqPLForn" crossorigin="anonymous"></script>
+
+  </head>
+  <body>
+    <div class="container">
+
+      <div class="bs-docs-section">
+        <h1> Brain Segmentation Pipeline </h1><br/>
+        
+      </div>
+
+      <div class="bs-docs-section">
+        <form action="/train" method="POST" enctype="multipart/form-data">
+
+          <h3>Upload input</h3>
+          <p> Upload files for the pipeline: </p>
+
+          <div class="input-group mb-3">
+            <div class="custom-file">
+              <input class="custom-file-input" type="file" id="wafer_original" name="wafer_original" accept="image/*">
+              <label class="custom-file-label" for="wafer_original">Original wafer image</label>
+            </div>
+          </div>
+
+          <div class="input-group mb-3">
+            <div class="custom-file">
+              <input class="custom-file-input" type="file" id="wafer_fluo" name="wafer_fluo" accept="image/*">
+              <label class="custom-file-label" for="wafer_fluo">Fluorsecent wafer image</label>
+            </div>
+
+          </div>
+
+          <div class="input-group mb-3">
+            <div class="custom-file">
+              <input class="custom-file-input" type="file" id="template_init" name="template_init" accept="json/*">
+              <label class="custom-file-label" for="template_init">Initial template labelme file</label>
+            </div>
+
+          </div>
+          
+          <br/><hr><br/>
+
+          <h3>Results</h3>
+          <p> When the pipeline is started, it will run approximatelly 30 min with 2 GPUs. 
+              Please provide your e-mail bellow if you want to receive the results on your e-mail. Otherwise, you can leave this window open and wait for the results.</p>
+          
+          <div class="form-group">
+            <label for="input_email">Email address</label>
+            <input class="form-control" id="input_email" name="input_email" type="email" aria-describedby="email_help" placeholder="Enter email">
+            <small id="email_help" class="form-text text-muted">We'll never share your email with anyone else.</small>
+          </div>
+
+          <br/>
+          <input class="btn btn-primary btn-lg" type="submit" value="Start Pipeline">
+           
+        </form>
+      </div>
+      
+    </div>
+
+    <script type="text/javascript">
+
+      $('.custom-file input').change(function (e) {
+          var files = [];
+          for (var i = 0; i < $(this)[0].files.length; i++) {
+              files.push($(this)[0].files[i].name);
+          }
+          $(this).next('.custom-file-label').html(files.join(', '));
+      });
+  
+  </script>
+
+  </body>
+</html>

@@ -1,0 +1,16 @@
+ninja
+yacs
+cython
+matplotlib
+tqdm
+flask
+pandas
+pyyaml
+pillow
+scikit-learn
+gcloud
+google-api-python-client
+cloudstorage
+webapp3
+requests
+
