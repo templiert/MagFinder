@@ -23,61 +23,8 @@ from Jama import Matrix
 from org.apache.commons.io import FileUtils
 from java.io import File, FileInputStream
 from java.net import URL
-from java.util.zip import GZIPInputStream
-from java.nio.file import Files
-from java.nio.file import Paths
-from java.util.zip import ZipFile
-
-from stitching.CommonFunctions import addHyperLinkListener
-from ij.gui import MultiLineLabel
-# ##########################################
-# get concorde (linkern.exe) and cygwin1.dll
-# try to download if not present
-pluginFolder = IJ.getDirectory('plugins')
-cygwindllPath = os.path.join(
-    pluginFolder,
-    'cygwin1.dll')
-concordePath = os.path.join(
-    pluginFolder,
-    'linkern.exe')
-
-# download cygwin1.dll
-if not os.path.isfile(cygwindllPath):
-    # download cygwin1.dll
-    try:
-        f = File(cygwindllPath)
-        FileUtils.copyURLToFile(
-            URL(r'https://raw.githubusercontent.com/templiert/MagFinder/master/cygwin1.dll'),
-            f)
-    except (Exception, java_exception) as e:
-        IJ.log('Failed to download cygwin1.dll due to ' + str(e))
-
-# download concorde (linkern.exe)
-if not os.path.isfile(concordePath):
-    concordeZip = os.path.join(
-        pluginFolder,
-        'concorde.gz')
-    try:
-        f = File(concordeZip)
-        FileUtils.copyURLToFile(
-            URL(r'https://www.math.uwaterloo.ca/tsp/concorde/downloads/codes/cygwin/linkern.exe.gz'),
-            f)
-        gis = GZIPInputStream(
-                FileInputStream(
-                    concordeZip))
-        Files.copy(
-            gis,
-            Paths.get(concordePath))
-        gis.close()
-        os.remove(concordeZip)
-    except (Exception, java_exception) as e:
-        IJ.log('Failed to download the concorde solver due to ' + str(e))
-
-# if one of the two files is missing
-if not (os.path.isfile(cygwindllPath)
-    and os.path.isfile(concordePath)):
-    concordePath = None
-# ##########################################
+from java.util.zip import GZIPInputStream, ZipFile
+from java.nio.file import Files, Paths
 
 ###############
 # I/O functions
@@ -98,8 +45,8 @@ def create_empty_magc():
         'magnets': {},
         'focus': {},
         'landmarksEM': {},
-        'serialorder': {},
-        'tsporder': {}
+        'serialorder': [],
+        'tsporder': []
         }
     return magc
 
@@ -575,7 +522,32 @@ def get_indexes_from_user_string(userString):
 ################
 # TSP Operations
 ################
-def order_from_mat(mat, rootFolder, solutionName = ''):
+def download_unzip(url, target_path):
+    # download, unzip, clean
+    IJ.log('Downloading TSP solver from ' + str(url))
+
+    gz_path = os.path.join(
+        pluginFolder,
+        'temp.gz')
+    try:
+        f = File(gz_path)
+        FileUtils.copyURLToFile(
+            URL(url),
+            f)
+        gis = GZIPInputStream(
+                FileInputStream(
+                    gz_path))
+        Files.copy(
+            gis,
+            Paths.get(target_path))
+        gis.close()
+        os.remove(gz_path)
+    except (Exception, java_exception) as e:
+        IJ.log(
+            'Failed to download from ' + str(url)
+            + ' due to ' + str(e))
+
+def order_from_mat(mat, rootFolder, solverPath, solutionName = ''):
     tsplibPath = os.path.join(rootFolder, 'TSPMat.tsp')
     save_mat_to_TSPLIB(mat, tsplibPath)
     solutionPath = os.path.join(
@@ -583,20 +555,35 @@ def order_from_mat(mat, rootFolder, solutionName = ''):
         'solution_' + solutionName + '.txt')
     if os.path.isfile(solutionPath):
         os.remove(solutionPath)
-    command = concordePath + ' -o ' + solutionPath + ' ' + tsplibPath
+    command = solverPath + ' -o ' + solutionPath + ' ' + tsplibPath
+    # IJ.log('TSP solving command ' + str(command))
 
     process = Runtime.getRuntime().exec(command)
 
     while not os.path.isfile(solutionPath):
         time.sleep(1)
-        IJ.log('Computing TSP solution ...')
+        IJ.log(
+            'Computing TSP solution with the '
+            + os.path.basename(solverPath).replace('.exe','')
+            + ' solver ...')
     time.sleep(1)
 
-    with open(solutionPath, 'r') as f:
-        lines = f.readlines()[1:]
     order = []
-    for line in lines:
-        order.append(int(line.split(' ')[0]))
+    if 'linkern.exe' in solverPath:
+        with open(solutionPath, 'r') as f:
+            lines = f.readlines()[1:]
+        for line in lines:
+            order.append(int(line.split(' ')[0]))
+
+    elif 'concorde.exe' in solverPath:
+        with open(solutionPath, 'r') as f:
+            result_line = f.readlines()[1]
+            result_line = result_line.replace('\n','')
+            result_line_splitted = result_line.split(' ')
+            result_line_splitted.remove('')
+            order = map(
+                int,
+                result_line_splitted)
 
     # remove the dummy city 0 and apply a -1 offset
     order.remove(0)
@@ -611,10 +598,10 @@ def order_from_mat(mat, rootFolder, solutionName = ''):
         costs.append(cost)
     totalCost = sum(costs)
     IJ.log(
-        'The total distance of the optimal order is '
+        'The total stage travel of the optimal order is '
         + str(int(totalCost)) + ' pixels.')
     IJ.log(
-        'The total cost of the non-optimized order is '
+        'The total stage travel of the non-optimized order is '
         + str(int(sum(
             [mat[t][t+1]
                 for t in range(len(order) - 1)] )))
@@ -665,22 +652,45 @@ def init_mat(n, initValue = 0):
     return a
 
 def handleKeypressO():
-    if not concordePath:
+    section_keys = magc['sections'].keys()
+    n_points = len(section_keys)
+    if n_points<2:
+        IJ.showMessage(
+            'Warning',
+            'You just pressed [o] to compute the order that minimizes stage travel.'
+            +'\n\nThere is no stage travel to be optimized because there are less than 2 sections.')
+        return
+    elif n_points<8:
+        solverPath = concordePath
+    else:
+        solverPath = linkernPath
+
+    if not (solverPath and cygwindllPath):
         IJ.showMessage(
             'Error',
-            ('linkern.exe or cygwin1.dll were not found in the Fiji plugins directory when Fiji started.'
+            ('The TSP solver or cygwin1.dll were not found in the Fiji plugins directory when Fiji started.'
             + '\n\nCannot compute the optimal path to minimize microscope stage movement.'))
         return
     compute_save_tsp_order()
 
 def compute_save_tsp_order():
-    if not concordePath:
+    section_keys = magc['sections'].keys()
+    n_points = len(section_keys)
+
+    if n_points<2:
         return
+    if n_points<8:
+        solverPath = concordePath
+    else:
+        solverPath = linkernPath
+
+    if not solverPath:
+        IJ.log('Could not compute the stage-movement-minimizing order because the solver or cygwin1.dll are missing')
+        return
+
     try:
-        section_keys = magc['sections'].keys()
         center_points = [pFloat(*magc['sections'][section_key]['center'])
             for section_key in section_keys]
-        n_points = len(section_keys)
 
         # initialize distance matrix
         distances = init_mat(
@@ -694,9 +704,11 @@ def compute_save_tsp_order():
 
         order,_ = order_from_mat(
             distances,
-            experimentFolder)
+            experimentFolder,
+            solverPath)
         magc['tsporder'] = order
-    except Exception as e:
+        IJ.log('The optimal section order to minimize stage travel is: ' + str(order))
+    except (Exception, java_exception) as e:
         IJ.log('The path to minimize stage movement could not be computed: ' + str(e))
         pass
 
@@ -1530,18 +1542,19 @@ def handleKeypressLocalModeX():
             message += '.'
 
         if get_OK(message):
-            waferIm.killRoi()
-            for name in [roiName, magnetName, focusName, sectionName]:
-                delete_roi(name)
 
             if waferIm.getNSlices() == 1:
                 if get_OK('Case not yet handled: you are trying to delete the only existing section.'
-                 + 'Please delete the file and start over instead. Continue?'):
+                 + '\n\nFiji will close. Please delete the .ini file and start over from scratch instead.\n\nContinue?'):
                     waferIm.close()
                     manager.close()
                     sys.exit()
                 else:
                     return
+
+            waferIm.killRoi()
+            for name in [roiName, magnetName, focusName, sectionName]:
+                delete_roi(name)
             # delete current slice
             waferIm.getImageStack().deleteSlice(stack_slice)
             newStack = waferIm.getImageStack()
@@ -2466,6 +2479,52 @@ def are_polygons_different(poly1,poly2):
 #################
 # Initializations
 IJ.log('Started.')
+
+# ####################################################
+# get concorde solver, linkern solver, and cygwin1.dll
+# try to download if not present
+pluginFolder = IJ.getDirectory('plugins')
+cygwindllPath = os.path.join(
+    pluginFolder,
+    'cygwin1.dll')
+linkernPath = os.path.join(
+    pluginFolder,
+    'linkern.exe')
+concordePath = os.path.join(
+    pluginFolder,
+    'concorde.exe')
+
+# download cygwin1.dll
+if not os.path.isfile(cygwindllPath):
+    # download cygwin1.dll
+    cygwindll_url = r'https://raw.githubusercontent.com/templiert/MagFinder/master/cygwin1.dll'
+    try:
+        IJ.log('Downloading Windows-10 precompiled cygwin1.dll from ' + cygwindll_url)
+        f = File(cygwindllPath)
+        FileUtils.copyURLToFile(
+            URL(cygwindll_url),
+            f)
+    except (Exception, java_exception) as e:
+        IJ.log('Failed to download cygwin1.dll due to ' + str(e))
+
+# download concorde and linkern solvers
+if not os.path.isfile(concordePath):
+    download_unzip(
+        r'https://www.math.uwaterloo.ca/tsp/concorde/downloads/codes/cygwin/concorde.exe.gz',
+        concordePath)
+if not os.path.isfile(linkernPath):
+    download_unzip(
+        r'https://www.math.uwaterloo.ca/tsp/concorde/downloads/codes/cygwin/linkern.exe.gz',
+        linkernPath)
+
+# if one of the three files is missing
+if not (os.path.isfile(cygwindllPath)
+    and os.path.isfile(concordePath)
+    and os.path.isfile(linkernPath)):
+    concordePath = None
+    linkernPath = None
+    cygwindllPath = None
+# ####################################################
 
 # size of point to grab annotations
 SIZE_HANDLE = 15
