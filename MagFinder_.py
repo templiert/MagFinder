@@ -555,7 +555,8 @@ def order_from_mat(mat, rootFolder, solverPath, solutionName = ''):
         'solution_' + solutionName + '.txt')
     if os.path.isfile(solutionPath):
         os.remove(solutionPath)
-    command = solverPath + ' -o ' + solutionPath + ' ' + tsplibPath
+    # adding " is needed if there are spaces in the paths
+    command = '"' + solverPath + '" -o "' + solutionPath + '" "' + tsplibPath + '"'
     # IJ.log('TSP solving command ' + str(command))
 
     process = Runtime.getRuntime().exec(command)
