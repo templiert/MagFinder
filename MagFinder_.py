@@ -1511,7 +1511,7 @@ def handleKeypressLocalModeX():
     sectionId = int(annotationName.split('-')[1])
     stack_slice = selectedAnnotation.getPosition()
 
-    if annotationType in ['magnet', 'roi']:
+    if annotationType in ['magnet', 'roi', 'focus']:
         if get_OK('Delete ' + annotationType + '-' + str(sectionId).zfill(4) + '?'):
             waferIm.killRoi()
             delete_roi(annotationName)
