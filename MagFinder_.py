@@ -2552,7 +2552,13 @@ except Exception as e:
     IJ.showMessage(
     'Exit',
     'There was a problem accessing the folder')
-    sys.exit()
+    sys.exit('No directory was selected. Exiting.')
+
+if not os.path.isdir(experimentFolder):
+    IJ.showMessage(
+        'Exit',
+        'No directory was selected. Exiting.')
+    sys.exit('No directory was selected. Exiting.')
 
 waferImNames = [
     imName for imName
