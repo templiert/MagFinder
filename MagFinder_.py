@@ -38,6 +38,15 @@ def get_OK(text):
     gd.showDialog()
     return gd.wasOKed()
 
+def get_name(text, defaultName=''):
+    gd = GenericDialog(text)
+    gd.addStringField(text, defaultName)
+    gd.showDialog()
+    if gd.wasCanceled():
+        IJ.showMessage('The substrate needs a name. Exiting.')
+        sys.exit()
+    return gd.getNextString()
+
 def create_empty_magc():
     magc = {
         'sections': {},
@@ -51,112 +60,131 @@ def create_empty_magc():
     return magc
 
 def read_ini():
-    global iniPath
+    global magcPath
+
     iniPaths = [os.path.join(experimentFolder,fileName)
         for fileName in os.listdir(experimentFolder)
         if os.path.splitext(fileName)[1] == '.ini']
 
-    if iniPaths == []: # if no .ini file (user is creating a wafer by hand)
-        IJ.log('No .ini file found. Creating an empty one')
-        iniPath = os.path.join(
+    magcPaths = [os.path.join(experimentFolder,fileName)
+        for fileName in os.listdir(experimentFolder)
+        if os.path.splitext(fileName)[1] == '.magc']
+
+    ##########
+    # find .magc or .ini file (.magc has priority over deprecated .ini)
+    if (iniPaths==[] and magcPaths==[]): # no .ini or .magc file (user is creating a wafer by hand)
+        IJ.log('No .magc file found. Creating an empty one')
+        wafer_name_from_user = get_name(
+            'Please name this substrate',
+            defaultName='default_wafer')
+        if wafer_name_from_user == '':
+            wafer_name_from_user = 'default_substrate'
+        magcPath = os.path.join(
             experimentFolder,
-            'segmented_wafer.ini')
+            (wafer_name_from_user
+                + '.magc'))
         magc = create_empty_magc()
+        IJ.log('Empty .magc container created.')
+        return magc
+    if magcPaths!=[]:
+        magcPath = magcPaths[0]
     else:
-        config = ConfigParser.ConfigParser()
-        iniPath = iniPaths[0]
-        magc = {}
+        magcPath = iniPaths[0]
+    ##########
 
-        with open(iniPath, 'rb') as configfile:
-            config.readfp(configfile)
+    config = ConfigParser.ConfigParser()
+    magc = {}
 
-        for header in config.sections():
-            if header == 'sections':
-                magc['sections'] = {}
+    with open(magcPath, 'rb') as configfile:
+        config.readfp(configfile)
 
-            elif header == 'rois':
-                magc['rois'] = {}
+    for header in config.sections():
+        if header == 'sections':
+            magc['sections'] = {}
 
-            elif header == 'magnets':
-                magc['magnets'] = {}
+        elif header == 'rois':
+            magc['rois'] = {}
 
-            elif header == 'focus':
-                magc['focus'] = {}
+        elif header == 'magnets':
+            magc['magnets'] = {}
 
-            elif header == 'landmarksEM':
-                magc['landmarksEM'] = {}
+        elif header == 'focus':
+            magc['focus'] = {}
 
-            elif 'sections.' in header:
-                section_id = int(header.split('.')[1])
-                magc['sections'][section_id] = {}
-                for key,val in config.items(header):
-                    if key == 'polygon':
-                        vals = map(float, val.split(','))
-                        poly_points = [[x,y] for x,y in zip(vals[::2], vals[1::2])]
-                        magc['sections'][section_id]['polygon'] = poly_points
-                    elif key == 'center':
-                        magc['sections'][section_id]['center'] = map(float, val.split(','))
-                    elif key in ['area', 'compression']:
-                        magc['sections'][section_id][str(key)] = float(val)
-                    elif key == 'angle':
-                        magc['sections'][section_id][str(key)] = ((float(val)+90)%360) - 180
+        elif header == 'landmarksEM':
+            magc['landmarksEM'] = {}
 
-            elif 'rois.' in header:
-                roi_id = int(header.split('.')[1])
-                magc['rois'][roi_id] = {}
-                for key,val in config.items(header):
-                    if key=='template':
-                        magc['rois'][roi_id]['template'] = int(val)
-                    elif key == 'polygon':
-                        vals = map(float, val.split(','))
-                        poly_points = [[x,y] for x,y in zip(vals[::2], vals[1::2])]
-                        magc['rois'][roi_id]['polygon'] = poly_points
-                    elif key == 'center':
-                        magc['rois'][roi_id]['center'] = map(float, val.split(','))
-                    elif key in ['area']:
-                        magc['rois'][roi_id][str(key)] = float(val)
-                    elif key == 'angle':
-                        magc['rois'][roi_id][str(key)] = ((float(val)+90)%360) - 180
+        elif 'sections.' in header:
+            section_id = int(header.split('.')[1])
+            magc['sections'][section_id] = {}
+            for key,val in config.items(header):
+                if key == 'polygon':
+                    vals = map(float, val.split(','))
+                    poly_points = [[x,y] for x,y in zip(vals[::2], vals[1::2])]
+                    magc['sections'][section_id]['polygon'] = poly_points
+                elif key == 'center':
+                    magc['sections'][section_id]['center'] = map(float, val.split(','))
+                elif key in ['area', 'compression']:
+                    magc['sections'][section_id][str(key)] = float(val)
+                elif key == 'angle':
+                    magc['sections'][section_id][str(key)] = ((float(val)+90)%360) - 180
 
-            elif 'magnets.' in header:
-                magnet_id = int(header.split('.')[1])
-                magc['magnets'][magnet_id] = {}
-                for key,val in config.items(header):
-                    if key=='template':
-                        magc['magnets'][magnet_id]['template'] = int(val)
-                    elif key=='location':
-                        magc['magnets'][magnet_id]['location'] = map(float, val.split(','))
+        elif 'rois.' in header:
+            roi_id = int(header.split('.')[1])
+            magc['rois'][roi_id] = {}
+            for key,val in config.items(header):
+                if key=='template':
+                    magc['rois'][roi_id]['template'] = int(val)
+                elif key == 'polygon':
+                    vals = map(float, val.split(','))
+                    poly_points = [[x,y] for x,y in zip(vals[::2], vals[1::2])]
+                    magc['rois'][roi_id]['polygon'] = poly_points
+                elif key == 'center':
+                    magc['rois'][roi_id]['center'] = map(float, val.split(','))
+                elif key in ['area']:
+                    magc['rois'][roi_id][str(key)] = float(val)
+                elif key == 'angle':
+                    magc['rois'][roi_id][str(key)] = ((float(val)+90)%360) - 180
 
-            elif 'focus.' in header:
-                focus_id = int(header.split('.')[1])
-                magc['focus'][focus_id] = {}
-                for key,val in config.items(header):
-                    if key=='template':
-                        magc['focus'][focus_id]['template'] = int(val)
-                    elif key in ['location', 'polygon']:
-                        vals = map(float, val.split(','))
-                        focus_points = [
-                            [x,y]
-                            for x,y in zip(vals[::2], vals[1::2])]
-                        magc['focus'][focus_id]['polygon'] = focus_points
+        elif 'magnets.' in header:
+            magnet_id = int(header.split('.')[1])
+            magc['magnets'][magnet_id] = {}
+            for key,val in config.items(header):
+                if key=='template':
+                    magc['magnets'][magnet_id]['template'] = int(val)
+                elif key=='location':
+                    magc['magnets'][magnet_id]['location'] = map(float, val.split(','))
 
-            elif 'landmarksEM.' in header:
-                landmark_id = int(header.split('.')[1])
-                magc['landmarksEM'][landmark_id] = map(float, config.get(header, 'location').split(','))
+        elif 'focus.' in header:
+            focus_id = int(header.split('.')[1])
+            magc['focus'][focus_id] = {}
+            for key,val in config.items(header):
+                if key=='template':
+                    magc['focus'][focus_id]['template'] = int(val)
+                elif key in ['location', 'polygon']:
+                    vals = map(float, val.split(','))
+                    focus_points = [
+                        [x,y]
+                        for x,y in zip(vals[::2], vals[1::2])]
+                    magc['focus'][focus_id]['polygon'] = focus_points
 
-            elif header == 'serialorder':
-                if config.get('serialorder', 'serialorder') != '[]':
-                    magc['serialorder'] = map(int, config.get('serialorder', 'serialorder').split(','))
-                else:
-                    magc['serialorder'] = []
+        elif 'landmarksEM.' in header:
+            landmark_id = int(header.split('.')[1])
+            magc['landmarksEM'][landmark_id] = map(float, config.get(header, 'location').split(','))
 
-            elif header == 'tsporder':
-                if config.get('tsporder', 'tsporder') != '[]':
-                    magc['tsporder'] = map(int, config.get('tsporder', 'tsporder').split(','))
-                else:
-                    magc['tsporder'] = []
+        elif header == 'serialorder':
+            if config.get('serialorder', 'serialorder') != '[]':
+                magc['serialorder'] = map(int, config.get('serialorder', 'serialorder').split(','))
+            else:
+                magc['serialorder'] = []
 
-    IJ.log('File successfully read: ' + iniPath)
+        elif header == 'tsporder':
+            if config.get('tsporder', 'tsporder') != '[]':
+                magc['tsporder'] = map(int, config.get('tsporder', 'tsporder').split(','))
+            else:
+                magc['tsporder'] = []
+
+    IJ.log('File successfully read: ' + magcPath)
     # IJ.log('*** MAGC FILE ***' + str(magc))
     return magc
 
@@ -298,7 +326,7 @@ def write_ini(magc):
                 ','.join(map(str,
                     magc['tsporder'])))
 
-    with open(iniPath, 'wb') as configfile:
+    with open(magcPath, 'wb') as configfile:
        config.write(configfile)
 
 #######################
@@ -2026,12 +2054,12 @@ def manager_to_magc_local():
 def save_all_global_rois():
     manager_to_magc_global()
     write_ini(magc)
-    IJ.log(str(datetime.datetime.now()) + ' - Everything saved in ' + iniPath)
+    IJ.log(str(datetime.datetime.now()) + ' - Everything saved in ' + magcPath)
 
 def save_all_local_rois():
     manager_to_magc_local()
     write_ini(magc)
-    IJ.log(str(datetime.datetime.now()) + ' - Everything saved in ' + iniPath)
+    IJ.log(str(datetime.datetime.now()) + ' - Everything saved in ' + magcPath)
 
 # def toggleLocalGlobalModes():
     # if globalMode:
