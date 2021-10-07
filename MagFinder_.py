@@ -9,7 +9,7 @@ from ij.gui import Roi, PolygonRoi, PointRoi, GenericDialog, NewImage
 from fiji.util.gui import GenericDialogPlus
 from ij.plugin import MontageMaker, CanvasResizer, ImageCalculator
 from ij.plugin.frame import RoiManager
-from java.lang import Math, Runtime
+from java.lang import Math, Runtime, System
 from java.lang import Exception as java_exception
 from java.lang.reflect import Array
 from java.util import HashSet
@@ -2523,28 +2523,47 @@ concordePath = os.path.join(
     pluginFolder,
     'concorde.exe')
 
-# download cygwin1.dll
-if not os.path.isfile(cygwindllPath):
-    # download cygwin1.dll
-    cygwindll_url = r'https://raw.githubusercontent.com/templiert/MagFinder/master/cygwin1.dll'
-    try:
-        IJ.log('Downloading Windows-10 precompiled cygwin1.dll from ' + cygwindll_url)
-        f = File(cygwindllPath)
-        FileUtils.copyURLToFile(
-            URL(cygwindll_url),
-            f)
-    except (Exception, java_exception) as e:
-        IJ.log('Failed to download cygwin1.dll due to ' + str(e))
+concorde_url = r'https://www.math.uwaterloo.ca/tsp/concorde/downloads/codes/cygwin/concorde.exe.gz'
+linkern_url = r'https://www.math.uwaterloo.ca/tsp/concorde/downloads/codes/cygwin/linkern.exe.gz'
+cygwindll_url = r'https://raw.githubusercontent.com/templiert/MagFinder/master/cygwin1.dll'
 
-# download concorde and linkern solvers
-if not os.path.isfile(concordePath):
-    download_unzip(
-        r'https://www.math.uwaterloo.ca/tsp/concorde/downloads/codes/cygwin/concorde.exe.gz',
-        concordePath)
-if not os.path.isfile(linkernPath):
-    download_unzip(
-        r'https://www.math.uwaterloo.ca/tsp/concorde/downloads/codes/cygwin/linkern.exe.gz',
-        linkernPath)
+if 'indows' in System.getProperty('os.name'):
+    # download cygwin1.dll
+    if not os.path.isfile(cygwindllPath):
+        # download cygwin1.dll
+        if get_OK(
+            'Downloading Windows-10 precompiled cygwin1.dll from '
+            + '\n \n' + cygwindll_url
+            + '\n \n That file is needed to compute the section order that minimizes stage travel.'
+            + '\n \n Do you agree? '):
+            try:
+                IJ.log('Downloading Windows-10 precompiled cygwin1.dll from ' + cygwindll_url)
+                f = File(cygwindllPath)
+                FileUtils.copyURLToFile(
+                    URL(cygwindll_url),
+                    f)
+            except (Exception, java_exception) as e:
+                IJ.log('Failed to download cygwin1.dll due to ' + str(e))
+
+    # download concorde and linkern solvers
+    if not os.path.isfile(concordePath):
+        if get_OK(
+            'Downloading concorde solver from '
+            + '\n \n' + concorde_url
+            + '\n \n That file is needed to compute the section order that minimizes stage travel.'
+            + '\n \n Do you agree?'):
+            download_unzip(
+                concorde_url,
+                concordePath)
+    if not os.path.isfile(linkernPath):
+        if get_OK(
+            'Downloading concorde solver from '
+            + '\n \n' + linkern_url
+            + '\n \n That file is needed to compute the section order that minimizes stage travel.'
+            + '\n \n Do you agree?'):
+            download_unzip(
+                linkern_url,
+                linkernPath)
 
 # if one of the three files is missing
 if not (os.path.isfile(cygwindllPath)
