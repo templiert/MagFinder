@@ -114,7 +114,7 @@ def read_ini():
         elif header == 'landmarksEM':
             magc['landmarksEM'] = {}
 
-        elif 'sections.' in header:
+        elif header.startswith('sections.'):
             section_id = int(header.split('.')[1])
             magc['sections'][section_id] = {}
             for key,val in config.items(header):
@@ -129,7 +129,7 @@ def read_ini():
                 elif key == 'angle':
                     magc['sections'][section_id][str(key)] = ((float(val)+90)%360) - 180
 
-        elif 'rois.' in header:
+        elif header.startswith('rois.'):
             roi_id = int(header.split('.')[1])
             magc['rois'][roi_id] = {}
             for key,val in config.items(header):
@@ -146,7 +146,7 @@ def read_ini():
                 elif key == 'angle':
                     magc['rois'][roi_id][str(key)] = ((float(val)+90)%360) - 180
 
-        elif 'magnets.' in header:
+        elif header.startswith('magnets.'):
             magnet_id = int(header.split('.')[1])
             magc['magnets'][magnet_id] = {}
             for key,val in config.items(header):
@@ -155,7 +155,7 @@ def read_ini():
                 elif key=='location':
                     magc['magnets'][magnet_id]['location'] = map(float, val.split(','))
 
-        elif 'focus.' in header:
+        elif header.startswith('focus.'):
             focus_id = int(header.split('.')[1])
             magc['focus'][focus_id] = {}
             for key,val in config.items(header):
@@ -168,7 +168,7 @@ def read_ini():
                         for x,y in zip(vals[::2], vals[1::2])]
                     magc['focus'][focus_id]['polygon'] = focus_points
 
-        elif 'landmarksEM.' in header:
+        elif header.startswith('landmarksEM.'):
             landmark_id = int(header.split('.')[1])
             magc['landmarksEM'][landmark_id] = map(float, config.get(header, 'location').split(','))
 
@@ -185,7 +185,6 @@ def read_ini():
                 magc['tsporder'] = []
 
     IJ.log('File successfully read: ' + magcPath)
-    # IJ.log('*** MAGC FILE ***' + str(magc))
     return magc
 
 def points_to_flat_string(points):
@@ -194,8 +193,7 @@ def points_to_flat_string(points):
         points_flat.append(point[0])
         points_flat.append(point[1])
     points_string = ','.join(
-        map(lambda x: str(round(x,3)),
-            points_flat))
+        [str(round(x,3)) for x in points_flat])
     return points_string
 
 def point_to_flat_string(point):
@@ -2090,62 +2088,41 @@ def sections_sanity_checks(sections):
         # return False
     return True
 
-'''
 def get_display_parameters(magc):
     # calculate [displaySize, cropSize, tissueMagnetDistance] based on sectionSize
+
+    tissueMagnetDistance = 0
     sectionExtent = 0
 
     for section in magc['sections'].values():
         sectionPoints = section['polygon']
-        sectionExtent = max(sectionExtent, longest_diagonal(sectionPoints))
+        sectionExtent = max(
+            sectionExtent,
+            longest_diagonal(sectionPoints))
 
-    displaySize = [int(1.2 * sectionExtent), int(1.2 * sectionExtent)]
-    displaySectionCenter = [int(0.5*displaySize[0]), int(0.5*displaySize[1])]
-    cropSize = [2*displaySize[0], 2*displaySize[1]]
-    return displaySectionCenter, displaySize, cropSize
-'''
+    displaySize = [
+        int(1.2 * sectionExtent),
+        int(1.2 * sectionExtent) if magc['magnets']=={} else int(1.4 * sectionExtent)
+        ]
+    displayCenter = [
+        int(0.5 * displaySize[0]),
+        int(0.5 * displaySize[1])]
+    cropSize = [
+        2*displaySize[0],
+        2*displaySize[1]]
 
-def get_display_parameters(magc):
-    # calculate [displaySize, cropSize, tissueMagnetDistance] based on sectionSize
-
-    if magc['magnets'] == {}:
-        sectionExtent = 0
-
-        for section in magc['sections'].values():
-            sectionPoints = section['polygon']
-            sectionExtent = max(sectionExtent, longest_diagonal(sectionPoints))
-
-        displaySize = [int(1.2 * sectionExtent), int(1.2 * sectionExtent)]
-        displaySectionCenter = [int(0.5*displaySize[0]), int(0.5*displaySize[1])]
-        cropSize = [2*displaySize[0], 2*displaySize[1]]
-        return displaySectionCenter, 0, displaySize, cropSize
-
-    else:
-        sectionExtent = 0
-        magnetExtent = 0
-        for section in magc['sections'].values():
-            sectionPoints = section['polygon']
-            sectionExtent = max(sectionExtent, longest_diagonal(sectionPoints))
-
-        # for magnet in magc['magnets'].values():
-            # magnetPoints = magnet['polygon']
-            # magnetExtent = max(magnetExtent, longest_diagonal(magnetPoints))
-
+    if magc['magnets'] != {}:
         tissueMagnetDistances = []
-        for key, _ in magc['magnets'].iteritems():
-            sectionCenter = magc['sections'][key]['center']
-            magnetCenter = magc['magnets'][key]['location']
-            tissueMagnetDistances.append(get_distance(sectionCenter, magnetCenter))
-
+        for key in magc['magnets'].keys():
+            tissueMagnetDistances.append(
+                get_distance(
+                    magc['sections'][key]['center'],
+                    magc['magnets'][key]['location']
+                ))
         if tissueMagnetDistances != []:
             tissueMagnetDistance = sum(tissueMagnetDistances)/len(tissueMagnetDistances)
 
-        # displaySize = [int(1.2 * max(sectionExtent, magnetExtent)), int(0.7 * (sectionExtent + magnetExtent))]
-        displaySize = [int(1.2 * sectionExtent), int(2*0.7*sectionExtent)]
-        displayTissueCenter = [(displaySize[0]/2), (displaySize[1] - 1.2 * (sectionExtent/2))]
-
-        cropSize = [2*displaySize[0], 2*displaySize[1]]
-        return displayTissueCenter, tissueMagnetDistance, displaySize, cropSize
+    return displayCenter, tissueMagnetDistance, displaySize, cropSize
 
 def init_manager():
     # get, place, and reset the ROIManager
@@ -2174,14 +2151,16 @@ def start_local_mode():
         start_global_mode()
         return
 
-    displaySectionCenter, tissueMagnetDistance, displaySize, cropSize = get_display_parameters(magc)
+    displayCenter, tissueMagnetDistance, displaySize, cropSize = get_display_parameters(magc)
     manager = init_manager()
     #############################
 
     ####################################################################
     # compute transforms (transformInfos) and show the stack of sections
     waferIm = IJ.openImage(waferImPath)
-    ims = ImageStack(displaySize[0], displaySize[1])
+    ims = ImageStack(
+        displaySize[0],
+        displaySize[1])
     global transformInfos
     transformInfos = {}
     for id, key in enumerate(magc['sections'].keys()):
@@ -2205,8 +2184,8 @@ def start_local_mode():
             focusPoints = []
 
         translation = [
-            displaySectionCenter[0] - sectionCenter[0],
-            displaySectionCenter[1] - sectionCenter[1]]
+            displayCenter[0] - sectionCenter[0],
+            displayCenter[1] - sectionCenter[1]]
 
         cropBoxBeforeRotation = Roi(
             sectionCenter[0] - cropSize[0]/2,
@@ -2220,7 +2199,7 @@ def start_local_mode():
 
         cropBoxForDisplay = Roi(
             (cropSize[0] - displaySize[0])/2.,
-            (cropSize[1] - displaySize[1])/2. - (tissueMagnetDistance/2.),
+            (cropSize[1] - displaySize[1])/2. + (tissueMagnetDistance/2.),
             displaySize[0],
             displaySize[1])
 
@@ -2236,7 +2215,7 @@ def start_local_mode():
         # translation for displaySize cropping
         translationTransform = AffineTransform.getTranslateInstance(
             -(sectionCenter[0] - displaySize[0]/2.),
-            -(sectionCenter[1] - displaySize[1]/2. - tissueMagnetDistance/2.))
+            -(sectionCenter[1] - displaySize[1]/2. + tissueMagnetDistance/2.))
 
         transformInfos[key] = [id, key, sectionPoints, roiPoints, magnetPoint,
             focusPoints, rotateTransform, translationTransform]
