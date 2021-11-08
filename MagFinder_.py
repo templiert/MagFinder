@@ -2405,6 +2405,8 @@ def save_minimal_csv(magc):
                 'section_angle',
                 'roi_center_x',
                 'roi_center_y',
+                'magnet_x',
+                'magnet_y',
                 'stage_order',
                 'serial_order']))
         f.write('\n')
@@ -2418,6 +2420,8 @@ def save_minimal_csv(magc):
                         magc['sections'][key]['angle'],
                         magc['rois'][key]['center'][0] if key in magc['rois'] else 0,
                         magc['rois'][key]['center'][1] if key in magc['rois'] else 0,
+                        magc['magnets'][key]['location'][0] if key in magc['magnets'] else 0,
+                        magc['magnets'][key]['location'][1] if key in magc['magnets'] else 0,
                         magc['tsporder'][id],
                         0,
                     ])))
