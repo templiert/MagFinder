@@ -410,8 +410,9 @@ def longest_diagonal(corners):
 
 def get_distance(corner1, corner2):
     return Math.sqrt(
-        (corner2[0]-corner1[0]) * (corner2[0]-corner1[0])
-        + (corner2[1]-corner1[1]) * (corner2[1]-corner1[1]))
+        (corner2[0]-corner1[0])**2
+        + (corner2[1]-corner1[1])**2
+        )
 
 def polygonroi_from_points(points):
     xPoly = [point[0] for point in points]
@@ -2302,6 +2303,7 @@ def close_local_mode():
         manager.runCommand('Update')
 
     save_all_local_rois()
+    save_minimal_csv(magc)
 
     windowIds = WindowManager.getIDList()
     for windowId in windowIds:
@@ -2389,6 +2391,38 @@ def start_global_mode(check_pad=False):
 
     ######################################################
 
+def save_minimal_csv(magc):
+    csv_path = os.path.join(
+        experimentFolder,
+        'annotations.csv')
+
+    with open(csv_path, 'w') as f:
+        f.write(
+            ','.join([
+                'section',
+                'section_center_x',
+                'section_center_y',
+                'section_angle',
+                'roi_center_x',
+                'roi_center_y',
+                'stage_order',
+                'serial_order']))
+        f.write('\n')
+        for id,key in enumerate(sorted(magc['sections'])):
+            f.write(
+                ','.join(
+                    map(str,[
+                        key,
+                        magc['sections'][key]['center'][0],
+                        magc['sections'][key]['center'][1],
+                        magc['sections'][key]['angle'],
+                        magc['rois'][key]['center'][0] if key in magc['rois'] else 0,
+                        magc['rois'][key]['center'][1] if key in magc['rois'] else 0,
+                        magc['tsporder'][id],
+                        0,
+                    ])))
+            f.write('\n')
+
 def close_global_mode():
     save_all_global_rois()
 
@@ -2397,6 +2431,8 @@ def close_global_mode():
         im = WindowManager.getImage(windowId)
         im.changes = False # to prevent a dialog
         im.close()
+
+    save_minimal_csv(magc)
 
     manager = RoiManager.getInstance()
     if not manager == None:
