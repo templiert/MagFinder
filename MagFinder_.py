@@ -1049,9 +1049,11 @@ def get_annotation_type(annotationName):
             return annotationType
     return None
 
-def reorder_roi_manager():
+def reorder_roi_manager(allRois=None):
     manager = get_roi_manager()
-    allRois = manager.getRoisAsArray()
+
+    if allRois is None:
+        allRois = manager.getRoisAsArray()
     if len(allRois) == 0:
         return
 
@@ -1061,7 +1063,9 @@ def reorder_roi_manager():
     allRoiNameTrailingNumbers = [
         int(roi.getName().split('-')[1])
         for roi in allRois
-        if not ('landmark' in roi.getName())]
+        if (
+            not ('landmark' in roi.getName())
+            and len(roi.getName().split('-')) > 1)]
     ids = sorted(set(allRoiNameTrailingNumbers))
     for id in ids:
         manager.addRoi(
@@ -1181,6 +1185,26 @@ def select_roi_by_name(roiName):
     manager.select(roiIndex)
 
 def handleKeypressGlobalModeM():
+    manager = get_roi_manager()
+    allRois = manager.getRoisAsArray()
+
+    allRois_copy = [
+        roi.clone()
+        for roi in allRois]
+
+    for roi in allRois:
+        name = roi.getName()
+        if 'ection' in name:
+            roi.setName(str(int(name.split('-')[1])))
+            roi.setStrokeWidth(20)
+        else:
+            roi.setName('')
+            roi.setStrokeWidth(5)
+
+    IJ.run(
+        'Labels...',
+        'color=white font=400 show use draw bold')
+
     waferIm = IJ.getImage()
     flattened = waferIm.flatten()
     flattened_path = os.path.join(
@@ -1192,6 +1216,12 @@ def handleKeypressGlobalModeM():
     IJ.log(
         'Flattened global image saved to '
         + str(flattened_path))
+    flattened.close()
+
+    reorder_roi_manager(allRois=allRois_copy)
+    IJ.run(
+        'Labels...',
+        'color=white font=10 show use draw')
 
 def handleKeypressLocalModeM():
     # save an overview montage of sections
