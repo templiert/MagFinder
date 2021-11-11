@@ -1023,6 +1023,7 @@ def handleKeypressGlobalMode(keyEvent):
         manager_to_magc_global()
         compute_save_tsp_order()
         close_global_mode()
+        waferIm.close()
 
     if keycode == KeyEvent.VK_T:
         close_global_mode()
@@ -2352,14 +2353,16 @@ def start_global_mode(check_pad=False):
     global globalMode
     globalMode = True
     global magc
+    global waferIm
     magc = read_ini()
 
-    if check_pad:
-        waferIm = load_pad_save(
-            waferImPath,
-            PADDING_FACTOR)
-    else:
-        waferIm = IJ.openImage(waferImPath)
+    if waferIm is None:
+        if check_pad:
+            waferIm = load_pad_save(
+                waferImPath,
+                PADDING_FACTOR)
+        else:
+            waferIm = IJ.openImage(waferImPath)
     waferIm.show()
     waferIm.getWindow().maximize()
 
@@ -2464,7 +2467,8 @@ def close_global_mode():
     for windowId in windowIds:
         im = WindowManager.getImage(windowId)
         im.changes = False # to prevent a dialog
-        im.close()
+        # im.close()
+        im.hide()
 
     save_minimal_csv(magc)
 
@@ -2754,4 +2758,5 @@ helpMessageGlobalMode = (
     + '<br><br><br><br><br><br></ul>')
 ################
 
+waferIm = None
 start_global_mode(check_pad=True)
