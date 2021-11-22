@@ -26,6 +26,13 @@ from java.net import URL
 from java.util.zip import GZIPInputStream, ZipFile
 from java.nio.file import Files, Paths
 
+# from net.imglib2.realtransform import AffineTransform2D
+# from net.imglib2.img.display.imagej import ImageJFunctions as IL
+# from net.imglib2.realtransform import RealViews as RV
+# from net.imglib2.view import Views
+# from net.imglib2.interpolation.randomaccess import NLinearInterpolatorFactory
+# from net.imglib2.interpolation.randomaccess import NearestNeighborInterpolatorFactory
+
 ###############
 # I/O functions
 ###############
@@ -59,7 +66,7 @@ def create_empty_magc():
         }
     return magc
 
-def read_ini():
+def read_magc():
     global magcPath
 
     iniPaths = [os.path.join(experimentFolder,fileName)
@@ -1188,6 +1195,7 @@ def select_roi_by_name(roiName):
 def handleKeypressGlobalModeM():
     manager = get_roi_manager()
     allRois = manager.getRoisAsArray()
+    waferIm = IJ.getImage()
 
     allRois_copy = [
         roi.clone()
@@ -1197,16 +1205,20 @@ def handleKeypressGlobalModeM():
         name = roi.getName()
         if 'ection' in name:
             roi.setName(str(int(name.split('-')[1])))
-            roi.setStrokeWidth(20)
+            # roi.setStrokeWidth(20)
+            roi.setStrokeWidth(8)
         else:
             roi.setName('')
-            roi.setStrokeWidth(5)
+            # roi.setStrokeWidth(5)
+            roi.setStrokeWidth(1)
 
     IJ.run(
         'Labels...',
-        'color=white font=400 show use draw bold')
+        (
+            'color=white font='
+            + str(int(waferIm.getWidth()/400))
+            + ' show use draw bold'))
 
-    waferIm = IJ.getImage()
     flattened = waferIm.flatten()
     flattened_path = os.path.join(
         experimentFolder,
@@ -2177,7 +2189,7 @@ def start_local_mode():
     #############################
     # get sections and parameters
     global magc # needs to be accessible outside
-    magc = read_ini()
+    magc = read_magc()
     if not sections_sanity_checks(magc):
         IJ.showMessage('Something is wrong with the sections in the .magc file (probably no section defined). Fix it with the global mode.')
         start_global_mode()
@@ -2189,16 +2201,41 @@ def start_local_mode():
 
     ####################################################################
     # compute transforms (transformInfos) and show the stack of sections
-    waferIm = IJ.openImage(waferImPath)
+    # waferIm = IJ.openImage(waferImPath)
     ims = ImageStack(
         displaySize[0],
         displaySize[1])
     global transformInfos
     transformInfos = {}
+
+    # # # img = IL.wrap(waferIm)
+    # # # imgs = []
     for id, key in enumerate(magc['sections'].keys()):
         sectionPoints = magc['sections'][key]['polygon']
         sectionCenter = magc['sections'][key]['center']
         sectionAngle = magc['sections'][key]['angle']
+
+        # # # aff = AffineTransform2D()
+        # # # aff.translate([
+            # # # -sectionCenter[0],
+            # # # -sectionCenter[1],
+            # # # ])
+        # # # aff.rotate(sectionAngle * Math.PI/180)
+
+        # # # transformed = RV.transform(
+            # # # Views.interpolate(
+                # # # Views.extendZero(img),
+                # # # NLinearInterpolatorFactory()),
+                # # # # NearestNeighborInterpolatorFactory()),
+            # # # aff)
+
+        # # # imgs.append(
+            # # # Views.interval(
+                # # # transformed,
+                # # # [-int(0.5*displaySize[0]), -int(0.5*displaySize[1])],
+                # # # [int(0.5*displaySize[0]), int(0.5*displaySize[1])],
+            # # # ))
+
         roiPoints = []
         if key in magc['rois'].keys():
             roiPoints = magc['rois'][key]['polygon']
@@ -2257,6 +2294,15 @@ def start_local_mode():
             croppedRotatedCropped.getProcessor())
 
     imp = ImagePlus('Stack of aligned sections', ims)
+    # # # img_stack = Views.permute(
+        # # # Views.addDimension(
+            # # # Views.stack(imgs),
+            # # # 0,
+            # # # 0),
+        # # # 3,
+        # # # 2)
+    # # # IL.show(img_stack)
+
     ####################################################################
 
     ##################################################
@@ -2354,7 +2400,7 @@ def start_global_mode(check_pad=False):
     globalMode = True
     global magc
     global waferIm
-    magc = read_ini()
+    magc = read_magc()
 
     if waferIm is None:
         if check_pad:
@@ -2455,7 +2501,7 @@ def save_minimal_csv(magc):
                         magc['rois'][key]['center'][1] if key in magc['rois'] else 0,
                         magc['magnets'][key]['location'][0] if key in magc['magnets'] else 0,
                         magc['magnets'][key]['location'][1] if key in magc['magnets'] else 0,
-                        magc['tsporder'][id],
+                        magc['tsporder'][id] if magc['tsporder']!=[] else 0,
                         0,
                     ])))
             f.write('\n')
