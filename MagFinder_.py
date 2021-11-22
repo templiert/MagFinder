@@ -2489,7 +2489,7 @@ def save_minimal_csv(magc):
                 'stage_order',
                 'serial_order']))
         f.write('\n')
-        for id,key in enumerate(sorted(magc['sections'])):
+        for id_key,key in enumerate(sorted(magc['sections'])):
             f.write(
                 ','.join(
                     map(str,[
@@ -2501,7 +2501,7 @@ def save_minimal_csv(magc):
                         magc['rois'][key]['center'][1] if key in magc['rois'] else 0,
                         magc['magnets'][key]['location'][0] if key in magc['magnets'] else 0,
                         magc['magnets'][key]['location'][1] if key in magc['magnets'] else 0,
-                        magc['tsporder'][id] if magc['tsporder']!=[] else 0,
+                        magc['tsporder'][id_key] if magc['tsporder']!=[] else 0,
                         0,
                     ])))
             f.write('\n')
