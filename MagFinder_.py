@@ -1,11 +1,11 @@
-import sys, os, shutil, time, threading
+import sys, os, time, threading
 import datetime, java, jarray, copy, ConfigParser
 
 import ij
 from ij import IJ, ImagePlus, ImageStack, WindowManager
 
 from ij.io import DirectoryChooser
-from ij.gui import Roi, PolygonRoi, PointRoi, GenericDialog, NewImage
+from ij.gui import Roi, Line, PolygonRoi, PointRoi, GenericDialog, NewImage
 from fiji.util.gui import GenericDialogPlus
 from ij.plugin import MontageMaker, CanvasResizer, ImageCalculator
 from ij.plugin.frame import RoiManager
@@ -422,26 +422,21 @@ def get_distance(corner1, corner2):
         )
 
 def polygonroi_from_points(points):
-    xPoly = [point[0] for point in points]
-    yPoly = [point[1] for point in points]
-    return PolygonRoi(xPoly, yPoly, PolygonRoi.POLYGON)
+    if len(points)==2:
+        return Line(
+            points[0][0],points[0][1],
+            points[1][0],points[1][1],
+        )
+    else:
+        xPoly = [point[0] for point in points]
+        yPoly = [point[1] for point in points]
+        return PolygonRoi(xPoly, yPoly, PolygonRoi.POLYGON)
 
 def centroid(points):
     return polygonroi_from_points(points).getContourCentroid()
 
 def polygon_area(points):
     return polygonroi_from_points(points).getStatistics().pixelCount
-
-def get_model_from_points(sourcePoints, targetPoints):
-    rigidModel = RigidModel2D()
-    pointMatches = HashSet()
-    for a in zip(sourcePoints, targetPoints):
-        pm = PointMatch(
-            Point([a[0][0], a[0][1]]),
-            Point([a[1][0], a[1][1]]))
-        pointMatches.add(pm)
-    rigidModel.fit(pointMatches)
-    return rigidModel
 
 def get_angle(line):
     diff = [
@@ -501,6 +496,28 @@ def apply_affine_t(x_in, y_in, aff):
 def invert_affine_t(aff):
     return aff.inverse()
 
+def rigid_t(x_in, y_in, x_out, y_out):
+    rigidModel = RigidModel2D()
+    pointMatches = HashSet()
+    for x_i, y_i, x_o, y_o in zip(x_in, y_in, x_out, y_out):
+        pointMatches.add(PointMatch(
+            Point([x_i, y_i]),
+            Point([x_o, y_o]),
+            )
+        )
+    rigidModel.fit(pointMatches)
+    return rigidModel
+
+def apply_rigid_t(x_in, y_in, rigid_model):
+    x_out = []
+    y_out = []
+    for x_i, y_i in zip(x_in, y_in):
+        x_o, y_o = rigid_model.apply([x_i, y_i])
+        x_out.append(x_o)
+        y_out.append(y_o)
+    return x_out, y_out
+
+
 #############################
 ### Propagation functions ###
 
@@ -513,21 +530,23 @@ def propagate_points(source_section, source_points, target_section):
     source_section_x, source_section_y = points_to_xy(source_section)
     source_points_x, source_points_y = points_to_xy(source_points)
     target_section_x, target_section_y = points_to_xy(target_section)
-    aff = affine_t(
+    if len(source_section)==2:
+        compute_t = rigid_t
+        apply_t = apply_rigid_t
+    else:
+        compute_t = affine_t
+        apply_t = apply_affine_t
+
+    trans = compute_t(
         source_section_x, source_section_y,
         target_section_x, target_section_y)
-    target_points_x, target_points_y = apply_affine_t(
+    target_points_x, target_points_y = apply_t(
         source_points_x,
         source_points_y,
-        aff)
+        trans)
     target_points = [
         [x,y]
         for x,y in zip(target_points_x, target_points_y)]
-    # IJ.log(
-        # 'source_section - ' + str(source_section) + '\n'
-        # + 'target_section - ' + str(target_section) + '\n'
-        # + 'source_points - ' + str(source_points) + '\n'
-        # + 'target_points - ' + str(target_points) + '\n')
     return target_points
 
 def get_indexes_from_user_string(userString):
@@ -899,27 +918,6 @@ def handleKeyPressGlobalModeA():
                 else:
                     nameSuggestions.append('section-0000')
 
-                # roiKeys = magc['rois'].keys()
-                # if len(roiKeys) > 0:
-                    # roiMaxKey = max(roiKeys)
-                    # roiName = 'roi-' + str(roiMaxKey+1).zfill(4)
-                    # nameSuggestions.append(roiName)
-                # else:
-                    # nameSuggestions.append('roi-0000')
-
-                # sectionSet = set(magc['sections'].keys())
-                # roiSet = set(magc['rois'].keys())
-
-                # if len(tissueSet - magnetSet) > 0:
-                    # IJ.log('Missing Magnet parts ' + str(tissueSet - magnetSet))
-                # if len(magnetSet - tissueSet) > 0:
-                    # IJ.log('Missing Tissue parts ' + str(magnetSet - tissueSet))
-
-                # for missingMagnet in tissueSet - magnetSet:
-                    # nameSuggestions.append('magnet-' + str(missingMagnet).zfill(4))
-                # for missingTissue in magnetSet - tissueSet:
-                    # nameSuggestions.append('tissue-' + str(missingMagnet).zfill(4))
-
                 nameSuggestions = sorted(set(nameSuggestions)) # to remove duplicates
                 #######################################
 
@@ -944,10 +942,16 @@ def handleKeyPressGlobalModeA():
             if 'section-' in roiName:
                 magc['sections'][roiId] = fill_section_dict(drawnRoi)
                 waferIm.killRoi()
-                drawnRoi = PolygonRoi(
-                    [point[0] for point in points],
-                    [point[1] for point in points],
-                    Roi.POLYGON)
+                if isinstance(drawnRoi, Line):
+                    drawnRoi = Line(
+                        points[0][0], points[0][1],
+                        points[1][0], points[1][1],
+                        )
+                else:
+                    drawnRoi = PolygonRoi(
+                        [point[0] for point in points],
+                        [point[1] for point in points],
+                        Roi.POLYGON)
                 drawnRoi.setName(roiName)
                 waferIm.setRoi(drawnRoi)
                 drawnRoi.setStrokeColor(Color.blue)
@@ -1869,7 +1873,10 @@ def focus_on_ok(dialog):
 
 def fill_section_dict(roi, compression = 1):
     d = {}
-    points = points_from_poly(roi.getFloatPolygon())
+    if isinstance(roi, Line):
+        points = points_from_poly(roi.getFloatPoints())[:2]
+    else:
+        points = points_from_poly(roi.getFloatPolygon())
     d['polygon'] = [
         [point[0], point[1]] for point in points]
     d['center'] = centroid(points)
@@ -2007,8 +2014,10 @@ def manager_to_magc_local():
         annotationName = annotation.getName()
         annotationId = int(annotationName.split('-')[-1])
         annotationType = get_annotation_type(annotationName)
-
-        points = points_from_poly(annotation.getFloatPolygon())
+        if isinstance(annotation, Line):
+            points = points_from_poly(annotation.getFloatPoints())[:2]
+        else:
+            points = points_from_poly(annotation.getFloatPolygon())
 
         transformedPoints = (
             transform_points_from_local_to_global(
@@ -2044,11 +2053,7 @@ def manager_to_magc_local():
                     pass
 
         else:
-            globalRoi = PolygonRoi(
-                [point[0] for point in transformedPoints],
-                [point[1] for point in transformedPoints],
-                Roi.POLYGON)
-            # globalRoi.setName(annotationName) # useless I believe
+            globalRoi = polygonroi_from_points(transformedPoints)
 
             if annotationType == 'section':
                 magc['sections'][annotationId] = fill_section_dict(globalRoi)
@@ -2323,7 +2328,11 @@ def start_local_mode():
 
                 xPoly = [point[0] for point in translatedrotatedPoints]
                 yPoly = [point[1] for point in translatedrotatedPoints]
-                if len(xPoly)>1 or annotationType=='focus':
+
+                if len(xPoly)==2:
+                    if annotationType=='section':
+                        poly = Line(xPoly[0], yPoly[0], xPoly[1], yPoly[1])
+                elif len(xPoly)>1 or annotationType=='focus':
                     poly = PolygonRoi(xPoly, yPoly, PolygonRoi.POLYGON)
                 else:
                     poly = PointRoi(xPoly[0], yPoly[0])
