@@ -89,6 +89,7 @@ class Wafer(object):
         self.poly_transforms_inverse = {}
         self.serialorder = []
         self.tsporder = []
+        self.tsp_orderer = TSPSolver(self.root)
         self.file_to_wafer()
         # self.name # TODO
         IJ.setTool("polygon")
@@ -104,20 +105,22 @@ class Wafer(object):
         if not os.path.isdir(self.root):
             IJ.showMessage("Exit", "No directory was selected. Exiting.")
             sys.exit("No directory was selected. Exiting.")
-        wafer_im_names = [
-            name
-            for name in os.listdir(self.root)
-            if any(
-                [
-                    name.endswith(".tif"),
-                    name.endswith(".png"),
-                    name.endswith(".jpg"),
-                    name.endswith(".tiff"),
-                    name.endswith(".jpeg"),
-                ]
-            )
-            and not "verview" in name
-        ]
+        wafer_im_names = sorted(
+            [
+                name
+                for name in os.listdir(self.root)
+                if any(
+                    [
+                        name.endswith(".tif"),
+                        name.endswith(".png"),
+                        name.endswith(".jpg"),
+                        name.endswith(".tiff"),
+                        name.endswith(".jpeg"),
+                    ]
+                )
+                and not "verview" in name
+            ]
+        )
         if not wafer_im_names:
             IJ.showMessage(
                 "Message",
@@ -212,8 +215,6 @@ class Wafer(object):
                             annotation_type.handle_size_global
                         )
         elif self.mode is Mode.LOCAL:
-            total_transform = 0
-            total_set_poly = 0
             for id, section_id in enumerate(sorted(self.sections.keys())):
                 for annotation_type in [
                     AnnotationType.SECTION,
@@ -573,6 +574,21 @@ class Wafer(object):
             )
         return display_center, tissue_magnet_distance, display_size, crop_size
 
+    def compute_stage_tsp_order(self):
+        center_points = [
+            pFloat(*wafer.sections[section_key].centroid)
+            for section_key in sorted(self.sections)
+        ]
+        # fill distance matrix
+        distances = TSPSolver.init_mat(len(self.sections), initValue=999999)
+        for a, b in itertools.combinations_with_replacement(
+            range(len(self.sections)), 2
+        ):
+            distances[a][b] = distances[b][a] = center_points[a].distance(
+                center_points[b]
+            )
+        self.tsporder = self.tsp_orderer.compute_tsp_order(distances)
+
 
 class Annotation(object):
     def __init__(self, annotation_type, poly, id, template=None):
@@ -752,11 +768,11 @@ def handle_key_global(keyEvent):
             )
     if keycode == KeyEvent.VK_Q:  # terminate and save
         wafer.manager_to_wafer()  # will be repeated in close_mode but it's OK
-        compute_tsp_order()
+        wafer.compute_stage_tsp_order()
         wafer.close_mode()
     if keycode == KeyEvent.VK_O:
         wafer.manager_to_wafer()
-        compute_tsp_order()
+        wafer.compute_stage_tsp_order()
         wafer.save()
     if keycode == KeyEvent.VK_H:
         IJ.showMessage("Help for global mode", HELP_MSG_GLOBAL)
@@ -824,7 +840,7 @@ def handle_key_local(keyEvent):
         handle_key_m_local()
     if keycode == KeyEvent.VK_Q:
         wafer.manager_to_wafer()  # will be repeated in close_mode but it's OK
-        compute_tsp_order()
+        wafer.compute_stage_tsp_order()
         wafer.close_mode()
     if keycode == KeyEvent.VK_D:
         move_roi_manager_selection(-1)
@@ -854,7 +870,7 @@ def handle_key_local(keyEvent):
         wafer.save()
     if keycode == KeyEvent.VK_O:
         wafer.manager_to_wafer()
-        compute_tsp_order()
+        wafer.compute_stage_tsp_order()
         wafer.save()
     if keycode == KeyEvent.VK_H:
         IJ.showMessage("Help for local mode", HELP_MSG_LOCAL)
@@ -1621,191 +1637,189 @@ def propagate_points(source_section, source_points, target_section):
 # ----- End Geometric functions ----- #
 
 
-# ----- TSP functions ----- #
-def download_unzip(url, target_path):
-    # download, unzip, clean
-    IJ.log("Downloading TSP solver from " + str(url))
-    gz_path = os.path.join(IJ.getDirectory("plugins"), "temp.gz")
-    try:
-        FileUtils.copyURLToFile(URL(url), File(gz_path))
-        gis = GZIPInputStream(FileInputStream(gz_path))
-        Files.copy(gis, Paths.get(target_path))
-        gis.close()
-        os.remove(gz_path)
-    except (Exception, java_exception) as e:
-        IJ.log("Failed to download from " + str(url) + " due to " + str(e))
+def pairwise(iterable):
+    """from https://docs.python.org/3/library/itertools.html#itertools.pairwise
+    'ABCD' --> AB BC CD"""
+    a, b = itertools.tee(iterable)
+    next(b, None)
+    return zip(a, b)
 
 
-def order_from_mat(mat, rootFolder, solverPath, solutionName=""):
-    tsplibPath = os.path.join(rootFolder, "TSPMat.tsp")
-    save_mat_to_TSPLIB(mat, tsplibPath)
-    solutionPath = os.path.join(rootFolder, "solution_{}.txt".format(solutionName))
-    if os.path.isfile(solutionPath):
-        os.remove(solutionPath)
-    # adding " is needed if there are spaces in the paths
-    command = '"' + solverPath + '" -o "' + solutionPath + '" "' + tsplibPath + '"'
-    # IJ.log('TSP solving command ' + str(command))
-    Runtime.getRuntime().exec(command)
+class TSPSolver(object):
+    def __init__(self, root):
+        self.concorde_path, self.linkern_path = self.get_tsp_solver_paths()
+        self.root = root
 
-    while not os.path.isfile(solutionPath):
-        time.sleep(1)
-        IJ.log(
-            "Computing TSP solution with the {} solver...".format(
-                os.path.basename(solverPath).replace(".exe", "")
-            )
+    def get_tsp_solver_paths(self):
+        """
+        get concorde solver, linkern solver, cygwin1.dll
+        try to download if not present
+        """
+        plugin_folder = IJ.getDirectory("plugins")
+        cygwindll_path = os.path.join(plugin_folder, "cygwin1.dll")
+        linkern_path = os.path.join(plugin_folder, "linkern.exe")
+        concorde_path = os.path.join(plugin_folder, "concorde.exe")
+
+        concorde_url = r"https://www.math.uwaterloo.ca/tsp/concorde/downloads/codes/cygwin/concorde.exe.gz"
+        linkern_url = r"https://www.math.uwaterloo.ca/tsp/concorde/downloads/codes/cygwin/linkern.exe.gz"
+        cygwindll_url = (
+            r"https://raw.githubusercontent.com/templiert/MagFinder/master/cygwin1.dll"
         )
-    time.sleep(1)
-
-    if "linkern.exe" in solverPath:
-        with open(solutionPath, "r") as f:
-            order = [int(line.split(" ")[0]) for line in f.readlines()[1:]]
-    elif "concorde.exe" in solverPath:
-        with open(solutionPath, "r") as f:
-            order = [
-                int(x) for x in f.readlines()[1].replace("\n", "").split(" ").remove("")
-            ]
-    # remove the dummy city 0 and apply a -1 offset
-    order.remove(0)
-    order = [o - 1 for o in order]
-
-    costs = []
-    for id, o in enumerate(order[:-1]):
-        o1, o2 = sorted(
-            [order[id], order[id + 1]]
-        )  # sorting because [8, 6] is not in the matrix, but [6,8] is
-        cost = mat[o1][o2]
-        # IJ.log( 'order cost ' + str(order[id]) + '_' +  str(order[id+1]) + '_' + str(cost))
-        costs.append(cost)
-
-    for name, travel in zip(
-        ("non-", ""), ([mat[t][t + 1] for t in range(len(order) - 1)], costs)
-    ):
-        IJ.log(
-            "The total stage travel of the {}optimized order is {} pixels.".format(
-                name, int(sum(travel))
-            )
+        download_msg = (
+            "Downloading Windows-10 precompiled cygwin1.dll from \n \n{}\n \n"
+            "That file is needed to compute the section order that minimizes stage travel."
+            "\n \nDo you agree? "
         )
-    # delete temporary files
-    for p in [solutionPath, tsplibPath]:
-        if os.path.isfile(p):
-            os.remove(p)
-    return order, costs
-
-
-def save_mat_to_TSPLIB(mat, path):
-    with open(path, "w") as f:
-        f.write("NAME: Section_Similarity_Data\n")
-        f.write("TYPE: TSP\n")
-        f.write("DIMENSION: {}\n".format(len(mat) + 1))
-        f.write("EDGE_WEIGHT_TYPE: EXPLICIT\n")
-        f.write("EDGE_WEIGHT_FORMAT: UPPER_ROW\n")
-        f.write("NODE_COORD_TYPE: NO_COORDS\n")
-        f.write("DISPLAY_DATA_TYPE: NO_DISPLAY\n")
-        f.write("EDGE_WEIGHT_SECTION\n")
-
-        distances = [0] * len(mat)  # dummy city
-        for i, j in itertools.combinations(range(len(mat)), 2):
-            distance = mat[i][j]
-            distances.append(int(float(distance)))
-        for id, distance in enumerate(distances):
-            f.write(str(distance))
-            if (id + 1) % 10 == 0:
-                f.write("\n")
-            else:
-                f.write(" ")
-        f.write("EOF" + "\n")
-
-
-def init_mat(n, initValue=0):
-    a = Array.newInstance(java.lang.Float, [n, n])
-    for i, j in itertools.product(range(n), repeat=2):
-        a[i][j] = initValue
-    return a
-
-
-def compute_tsp_order():
-    section_keys = wafer.sections.keys()
-    n_points = len(section_keys)
-
-    if n_points < 2:
-        return
-    if n_points < 8:
-        solverPath = concorde_path
-    else:
-        solverPath = linkern_path
-
-    if not solverPath:
-        IJ.log(
-            "Could not compute the stage-movement-minimizing order because the solver or cygwin1.dll are missing"
-        )
-        return
-
-    try:
-        center_points = [
-            pFloat(*wafer.sections[section_key].centroid)
-            for section_key in section_keys
-        ]
-        # fill distance matrix
-        distances = init_mat(n_points, initValue=999999)
-        for a, b in itertools.combinations_with_replacement(range(n_points), 2):
-            distances[a][b] = center_points[a].distance(center_points[b])
-
-        wafer.tsporder, _ = order_from_mat(distances, wafer.root, solverPath)
-        IJ.log(
-            "The optimal section order to minimize stage travel is: {}".format(
-                wafer.tsporder
-            )
-        )
-    except (Exception, java_exception) as e:
-        IJ.log(
-            "The path to minimize stage movement could not be computed: {}".format(e)
-        )
-
-
-def get_tsp_solver_paths():
-    """
-    get concorde solver, linkern solver, cygwin1.dll
-    try to download if not present
-    """
-    plugin_folder = IJ.getDirectory("plugins")
-    cygwindll_path = os.path.join(plugin_folder, "cygwin1.dll")
-    linkern_path = os.path.join(plugin_folder, "linkern.exe")
-    concorde_path = os.path.join(plugin_folder, "concorde.exe")
-
-    concorde_url = r"https://www.math.uwaterloo.ca/tsp/concorde/downloads/codes/cygwin/concorde.exe.gz"
-    linkern_url = r"https://www.math.uwaterloo.ca/tsp/concorde/downloads/codes/cygwin/linkern.exe.gz"
-    cygwindll_url = (
-        r"https://raw.githubusercontent.com/templiert/MagFinder/master/cygwin1.dll"
-    )
-    download_msg = (
-        "Downloading Windows-10 precompiled cygwin1.dll from \n \n{}\n \n"
-        "That file is needed to compute the section order that minimizes stage travel."
-        "\n \nDo you agree? "
-    )
-    if "windows" in System.getProperty("os.name").lower():
-        # download cygwin1.dll
-        if not os.path.isfile(cygwindll_path):
+        if "windows" in System.getProperty("os.name").lower():
             # download cygwin1.dll
-            if get_OK(download_msg.format(cygwindll_url)):
-                try:
-                    FileUtils.copyURLToFile(URL(cygwindll_url), File(cygwindll_path))
-                except (Exception, java_exception) as e:
-                    IJ.log("Failed to download cygwin1.dll due to {}".format(e))
-        # download concorde and linkern solvers
-        for path, url in zip(
-            [concorde_path, linkern_path], [concorde_url, linkern_url]
+            if not os.path.isfile(cygwindll_path):
+                # download cygwin1.dll
+                if get_OK(download_msg.format(cygwindll_url)):
+                    try:
+                        FileUtils.copyURLToFile(
+                            URL(cygwindll_url), File(cygwindll_path)
+                        )
+                    except (Exception, java_exception) as e:
+                        IJ.log("Failed to download cygwin1.dll due to {}".format(e))
+            # download concorde and linkern solvers
+            for path, url in zip(
+                [concorde_path, linkern_path], [concorde_url, linkern_url]
+            ):
+                if not os.path.isfile(path):
+                    if get_OK(download_msg.format(url)):
+                        self.download_unzip(url, path)
+        if not all(
+            (os.path.isfile(p) for p in (cygwindll_path, concorde_path, linkern_path))
         ):
-            if not os.path.isfile(path):
-                if get_OK(download_msg.format(url)):
-                    download_unzip(url, path)
-    if not all(
-        (os.path.isfile(p) for p in (cygwindll_path, concorde_path, linkern_path))
-    ):
-        concorde_path = linkern_path = cygwindll_path = None
-    return concorde_path, linkern_path
+            concorde_path = linkern_path = cygwindll_path = None
+        return concorde_path, linkern_path
 
+    @staticmethod
+    def download_unzip(url, target_path):
+        # download, unzip, clean
+        IJ.log("Downloading TSP solver from " + str(url))
+        gz_path = os.path.join(IJ.getDirectory("plugins"), "temp.gz")
+        try:
+            FileUtils.copyURLToFile(URL(url), File(gz_path))
+            gis = GZIPInputStream(FileInputStream(gz_path))
+            Files.copy(gis, Paths.get(target_path))
+            gis.close()
+            os.remove(gz_path)
+        except (Exception, java_exception) as e:
+            IJ.log("Failed to download from " + str(url) + " due to " + str(e))
 
-# ----- End TSP functions ----- #
+    def order_from_mat(self, mat, root_folder, solver_path, solution_name=""):
+        tsplib_path = os.path.join(root_folder, "TSPMat.tsp")
+        self.save_mat_to_TSPLIB(mat, tsplib_path)
+        solution_path = os.path.join(
+            root_folder, "solution_{}.txt".format(solution_name)
+        )
+        if os.path.isfile(solution_path):
+            os.remove(solution_path)
+        command = '"{}" -o "{}" "{}"'.format(solver_path, solution_path, tsplib_path)
+        # command = (
+        #     '"' + solver_path + '" -o "' + solution_path + '" "' + tsplib_path + '"'
+        # )
+        # IJ.log('TSP solving command ' + str(command))
+        Runtime.getRuntime().exec(command)
+
+        while not os.path.isfile(solution_path):
+            time.sleep(1)
+            IJ.log(
+                "Computing TSP solution with the {} solver...".format(
+                    os.path.basename(solver_path).replace(".exe", "")
+                )
+            )
+        time.sleep(1)
+
+        if "linkern.exe" in solver_path:
+            with open(solution_path, "r") as f:
+                order = [int(line.split(" ")[0]) for line in f.readlines()[1:]]
+        elif "concorde.exe" in solver_path:
+            with open(solution_path, "r") as f:
+                order = [
+                    int(x)
+                    for x in f.readlines()[1].replace("\n", "").split(" ").remove("")
+                ]
+        # remove the dummy city 0 and apply a -1 offset
+        order.remove(0)
+        order = [o - 1 for o in order]
+
+        for name, cost in zip(
+            ("non-", ""),
+            (
+                sum([mat[t][t + 1] for t in range(len(order) - 1)]),
+                sum([mat[o1][o2] for o1, o2 in pairwise(order)]),
+            ),
+        ):
+            IJ.log(
+                "The total cost of the {}optimized order is {}".format(name, int(cost))
+            )
+        # delete temporary files
+        for p in [solution_path, tsplib_path]:
+            if os.path.isfile(p):
+                os.remove(p)
+        return order
+
+    @staticmethod
+    def save_mat_to_TSPLIB(mat, path):
+        with open(path, "w") as f:
+            f.write("NAME: Section_Similarity_Data\n")
+            f.write("TYPE: TSP\n")
+            f.write("DIMENSION: {}\n".format(len(mat) + 1))
+            f.write("EDGE_WEIGHT_TYPE: EXPLICIT\n")
+            f.write("EDGE_WEIGHT_FORMAT: UPPER_ROW\n")
+            f.write("NODE_COORD_TYPE: NO_COORDS\n")
+            f.write("DISPLAY_DATA_TYPE: NO_DISPLAY\n")
+            f.write("EDGE_WEIGHT_SECTION\n")
+
+            distances = [0] * len(mat)  # dummy city
+            for i, j in itertools.combinations(range(len(mat)), 2):
+                distance = mat[i][j]
+                distances.append(int(float(distance)))
+            for id, distance in enumerate(distances):
+                f.write(str(distance))
+                if (id + 1) % 10 == 0:
+                    f.write("\n")
+                else:
+                    f.write(" ")
+            f.write("EOF" + "\n")
+
+    @staticmethod
+    def init_mat(n, initValue=0):
+        a = Array.newInstance(java.lang.Float, [n, n])
+        for i, j in itertools.product(range(n), repeat=2):
+            a[i][j] = initValue
+        return a
+
+    def compute_tsp_order(self, pairwise_costs):
+        if len(pairwise_costs) < 2:
+            return
+        if len(pairwise_costs) < 8:
+            solver_path = self.concorde_path
+        else:
+            solver_path = self.linkern_path
+        if not solver_path:
+            IJ.log(
+                "Could not compute the stage-movement-minimizing order"
+                " because the solver or cygwin1.dll are missing"
+            )
+            return
+        try:
+            order = self.order_from_mat(pairwise_costs, self.root, solver_path)
+            IJ.log(
+                "The optimal section order to minimize stage travel is: {}".format(
+                    order
+                )
+            )
+        except (Exception, java_exception) as e:
+            IJ.log(
+                "The path to minimize stage movement could not be computed: {}".format(
+                    e
+                )
+            )
+            return []
+        return order
 
 
 if __name__ == "__main__":
@@ -1870,7 +1884,6 @@ if __name__ == "__main__":
         + "<br><br><br></html>"
     )
 
-    concorde_path, linkern_path = get_tsp_solver_paths()
     initial_ij_key_listeners = IJ.getInstance().getKeyListeners()
     wafer = Wafer()
     wafer.start_global_mode()
