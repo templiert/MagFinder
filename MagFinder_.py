@@ -299,7 +299,7 @@ class Wafer(object):
                             config.set(
                                 header,
                                 "angle",
-                                str(((annotations[id].area - 90) % 360) - 180),
+                                str(((annotations[id].angle - 90) % 360) - 180),
                             )
                     elif annotation_type in [
                         AnnotationType.MAGNET,
