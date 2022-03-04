@@ -32,9 +32,7 @@ from java.util.zip import GZIPInputStream
 from mpicbg.models import Point, PointMatch, RigidModel2D
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
 from net.imglib2.interpolation.randomaccess import (
-    NearestNeighborInterpolatorFactory,
-    NLinearInterpolatorFactory,
-)
+    NearestNeighborInterpolatorFactory, NLinearInterpolatorFactory)
 from net.imglib2.realtransform import AffineTransform2D
 from net.imglib2.realtransform import RealViews as RV
 from net.imglib2.view import Views
@@ -391,7 +389,7 @@ class Wafer(object):
                 for i in range(len(self.sections), len(self.landmarks)):
                     f.write(
                         ",,,,,,,,,{},{},,".format(
-                            self.landmarks[i][0], self.landmarks[i][1]
+                            self.landmarks[i].centroid[0], self.landmarks[i].centroid[1]
                         )
                     )
 
