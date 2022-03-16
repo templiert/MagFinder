@@ -32,7 +32,9 @@ from java.util.zip import GZIPInputStream
 from mpicbg.models import Point, PointMatch, RigidModel2D
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
 from net.imglib2.interpolation.randomaccess import (
-    NearestNeighborInterpolatorFactory, NLinearInterpolatorFactory)
+    NearestNeighborInterpolatorFactory,
+    NLinearInterpolatorFactory,
+)
 from net.imglib2.realtransform import AffineTransform2D
 from net.imglib2.realtransform import RealViews as RV
 from net.imglib2.view import Views
@@ -1868,6 +1870,7 @@ if __name__ == "__main__":
         + tag("Actions", "h3")
         + print_list(
             "[a] create/modify an annotation",
+            "[x] delete an annotation",
             "[t] toggle to global mode",
             "[g] validate your modification. It happens automatically when browsing through the sections with [d]/[f], [c]/[v], [e]/[r], or with the mouse wheel",
             "[q] quit. Everything will be saved",
