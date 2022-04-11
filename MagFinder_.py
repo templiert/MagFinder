@@ -1,5 +1,6 @@
 from __future__ import with_statement
 
+import copy
 import itertools
 import os
 import sys
@@ -27,7 +28,6 @@ from java.lang.reflect import Array
 from java.net import URL
 from java.nio.file import Files, Paths
 from java.util import HashSet
-from java.util.concurrent.atomic import AtomicInteger
 from java.util.zip import GZIPInputStream
 from mpicbg.models import Point, PointMatch, RigidModel2D
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
@@ -40,12 +40,19 @@ from net.imglib2.realtransform import RealViews as RV
 from net.imglib2.view import Views
 from org.apache.commons.io import FileUtils
 
+sys.path.append(IJ.getDirectory("plugins"))
+
+import MagReorderer
+
 SIZE_HANDLE = 15
 LOCAL_SIZE_STANDARD = 400  # for local summary
+# DISPLAY_FACTOR = 2.5
+DISPLAY_FACTOR = 2
 MSG_DRAWN_ROI_MISSING = (
     "Please draw something before pressing [a]."
     + "\nAfter closing this message you can press [h] for help."
 )
+ACCEPTED_IMAGE_FORMATS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
 
 
 class Mode(object):
@@ -54,6 +61,8 @@ class Mode(object):
 
 
 class AnnotationTypeDef(object):
+    """Parameters associated to an annotation type"""
+
     def __init__(self, name, string, color, handle_size_global, handle_size_local):
         self.name = name
         self.string = string
@@ -69,16 +78,86 @@ class AnnotationType(object):
     MAGNET = AnnotationTypeDef("magnets", "magnet", Color.green, 15, 15)
     LANDMARK = AnnotationTypeDef("landmarks", "landmark", Color.yellow, 15, 15)
 
+    @classmethod
+    def all(cls):
+        """Returns all annotation types"""
+        return [cls.SECTION, cls.ROI, cls.FOCUS, cls.MAGNET, cls.LANDMARK]
+
+
+def transfer_wafer(wafer_1, wafer_2):
+    """
+    Transforms the annotation from one wafer instance to another one.
+    The same ficucials must be defined in the two wafer instances.
+    You should write some code to get it to work:
+    wafer_1 = Wafer(path_1)
+    wafer_2 = Wafer(path_2) ...
+    """
+    IJ.log(
+        ("Transferring annotations from {} to {} ...".format(wafer_1, wafer_2)).center(
+            100, "-"
+        )
+    )
+    landmarks_1 = [wafer_1.landmarks[key].centroid for key in sorted(wafer_1.landmarks)]
+    landmarks_2 = [wafer_2.landmarks[key].centroid for key in sorted(wafer_2.landmarks)]
+    aff = GeometryCalculator.affine_t(
+        [l[0] for l in landmarks_1],
+        [l[1] for l in landmarks_1],
+        [l[0] for l in landmarks_2],
+        [l[1] for l in landmarks_2],
+    )
+    wafer_2.clear_annotations()
+    for key in sorted(wafer_1.sections):
+        for annotation_type in AnnotationType.all():
+            if (
+                hasattr(wafer_1, annotation_type.name)
+                and key in getattr(wafer_1, annotation_type.name)
+                and annotation_type is not AnnotationType.LANDMARK
+            ):
+                wafer_2.add(
+                    annotation_type,
+                    GeometryCalculator.points_to_poly(
+                        GeometryCalculator.xy_to_points(
+                            *GeometryCalculator.apply_affine_t(
+                                [
+                                    p[0]
+                                    for p in getattr(wafer_1, annotation_type.name)[
+                                        key
+                                    ].points
+                                ],
+                                [
+                                    p[1]
+                                    for p in getattr(wafer_1, annotation_type.name)[
+                                        key
+                                    ].points
+                                ],
+                                aff,
+                            )
+                        )
+                    ),
+                    key,
+                )
+    wafer_2.wafer_to_manager()
+    wafer_2.save()
+    IJ.log(
+        (
+            "Completed transfer of annotations from {} to {} ...".format(
+                wafer_1, wafer_2
+            )
+        ).center(100, "-")
+    )
+
 
 class Wafer(object):
-    def __init__(self):
+    def __init__(self, magc_path=None):
         self.mode = Mode.GLOBAL
-        self.root = None
+        self.root, self.image_path = self.init_image_path()
+        self.tsp_solver = TSPSolver(self.root)
         self.manager = init_manager()
-        self.image_path = self.init_image_path()
-        self.magc_path = self.init_magc_path()
+        if magc_path is None:
+            self.magc_path = self.init_magc_path()
+        else:
+            self.magc_path = magc_path
         self.init_images_global()
-
         self.sections = {}
         self.rois = {}
         self.focus = {}
@@ -87,41 +166,55 @@ class Wafer(object):
         self.transforms = {}
         self.poly_transforms = {}
         self.poly_transforms_inverse = {}
+        # the serial order is the order in which the sections have been cut
         self.serialorder = []
-        self.tsporder = []
-        self.tsp_orderer = TSPSolver(self.root)
+        # the stageorder is the order that minimizes microscope stage travel
+        # to image one section after the other
+        self.stageorder = []
+        self.GC = GeometryCalculator
         self.file_to_wafer()
-        # self.name # TODO
         IJ.setTool("polygon")
 
+    def __len__(self):
+        """Returns the number of sections"""
+        if not hasattr(self, "sections"):
+            return 0
+        return len(self.sections)
+
+    def set_global_mode(self):
+        """useful when wafer accessed from another module"""
+        self.mode = Mode.GLOBAL
+
+    def set_local_mode(self):
+        self.mode = Mode.LOCAL
+
     def init_image_path(self):
+        """
+        Finds the image used for navigation in magfinder.
+        It is the image with the smallest size in the directory
+        that does not contain "overview" in its name.
+        """
         try:
-            self.root = os.path.normpath(
+            root = os.path.normpath(
                 DirectoryChooser("Select the experiment folder.").getDirectory()
             )
         except Exception:
             IJ.showMessage("Exit", "There was a problem accessing the folder")
             sys.exit("No directory was selected. Exiting.")
-        if not os.path.isdir(self.root):
+        if not os.path.isdir(root):
             IJ.showMessage("Exit", "No directory was selected. Exiting.")
             sys.exit("No directory was selected. Exiting.")
-        wafer_im_names = sorted(
-            [
-                name
-                for name in os.listdir(self.root)
-                if any(
-                    [
-                        name.endswith(".tif"),
-                        name.endswith(".png"),
-                        name.endswith(".jpg"),
-                        name.endswith(".tiff"),
-                        name.endswith(".jpeg"),
-                    ]
-                )
-                and not "verview" in name
-            ]
-        )
-        if not wafer_im_names:
+        try:
+            wafer_im_path = sorted(
+                [
+                    os.path.join(root, name)
+                    for name in os.listdir(root)
+                    if any(name.endswith(x) for x in ACCEPTED_IMAGE_FORMATS)
+                    and not "verview" in name
+                ],
+                key=os.path.getsize,  # the smallest image is the one used for magfinder navigation
+            )[0]
+        except IndexError:
             IJ.showMessage(
                 "Message",
                 (
@@ -130,10 +223,10 @@ class Wafer(object):
                 ),
             )
             sys.exit()
-        else:
-            return os.path.join(self.root, wafer_im_names[0],)
+        return root, wafer_im_path
 
     def init_magc_path(self):
+        """Loads existing .magc file or creates a new one if does not exist"""
         magc_paths = [
             os.path.join(self.root, filename)
             for filename in os.listdir(self.root)
@@ -144,7 +237,7 @@ class Wafer(object):
             wafer_name_from_user = get_name(
                 "Please name this substrate",
                 default_name="default_substrate",
-                cancel_msg="The substrate needs a name. Exiting.",
+                cancel_msg="The substrate needs a name. Using 'default_substrate'.",
             )
             if not wafer_name_from_user:
                 wafer_name_from_user = "default_substrate"
@@ -156,10 +249,10 @@ class Wafer(object):
         return magc_path
 
     def file_to_wafer(self):
+        """Populates the wafer instance from the .magc file"""
         config = ConfigParser.ConfigParser()
         with open(self.magc_path, "rb") as configfile:
             config.readfp(configfile)
-
         for header in config.sections():
             if "." in header:
                 annotation_type, id = type_id(header, delimiter=".")
@@ -168,16 +261,17 @@ class Wafer(object):
                         vals = [float(x) for x in val.split(",")]
                         points = [[x, y] for x, y in zip(vals[::2], vals[1::2])]
                         self.add(
-                            annotation_type, points_to_poly(points), id,
+                            annotation_type, self.GC.points_to_poly(points), id,
                         )
-
-            elif header in ["serialorder", "tsporder"]:
+            elif header in ["serialorder", "stageorder"]:
                 if config.get(header, header) != "[]":
                     setattr(
                         self,
                         header,
                         [int(x) for x in config.get(header, header).split(",")],
                     )
+        if not self.serialorder:
+            self.serialorder = range(len(self.sections))
         IJ.log(
             (
                 "File successfully read with \n{} sections \n{} rois \n{} focus"
@@ -192,7 +286,7 @@ class Wafer(object):
         )
 
     def wafer_to_manager(self):
-        """Draws all rois from the wafer into the manager"""
+        """Draws all rois from the wafer instance into the manager"""
         self.manager.reset()
         if self.mode is Mode.GLOBAL:
             for landmark in self.landmarks.values():
@@ -215,57 +309,61 @@ class Wafer(object):
                             annotation_type.handle_size_global
                         )
         elif self.mode is Mode.LOCAL:
-            for id, section_id in enumerate(sorted(self.sections.keys())):
+            sorted_keys = sorted(self.sections)
+            for id_o, o in enumerate(
+                self.serialorder
+            ):  # sections are ordered in the local stack
                 for annotation_type in [
                     AnnotationType.SECTION,
                     AnnotationType.ROI,
                     AnnotationType.FOCUS,
                     AnnotationType.MAGNET,
                 ]:
-                    annotation = getattr(self, annotation_type.name).get(section_id)
+                    annotation = getattr(self, annotation_type.name).get(sorted_keys[o])
                     if annotation is not None:
-                        local_poly = transform_points_to_poly(
-                            annotation.points, self.poly_transforms[section_id]
+                        local_poly = self.GC.transform_points_to_poly(
+                            annotation.points, self.poly_transforms[sorted_keys[o]]
                         )
                         local_poly.setName(str(annotation))
                         local_poly.setStrokeColor(annotation_type.color)
                         local_poly.setImage(self.image)
-                        local_poly.setPosition(0, id + 1, 0)
+                        local_poly.setPosition(0, id_o + 1, 0)
                         local_poly.setHandleSize(annotation_type.handle_size_local)
                         self.manager.addRoi(local_poly)
 
-    def empty_annotations(self):
+    def clear_annotations(self):
+        """Clears all annotations except the landmarks"""
         self.sections = {}
         self.rois = {}
         self.focus = {}
         self.magnets = {}
 
-    def empty_transforms(self):
+    def clear_transforms(self):
+        """Clears all transforms"""
         self.transforms = {}
         self.poly_transforms = {}
         self.poly_transforms_inverse = {}
 
     def manager_to_wafer(self):
-        """Populates the wafer from the manager"""
-        self.empty_annotations()
+        """
+        Populates the wafer from the roi manager
+        Typically called after the user interacted with the UI
+        """
+        serial_order = copy.deepcopy(self.serialorder)
+        self.clear_annotations()
         for roi in self.manager.iterator():
             annotation_type, annotation_id = type_id(roi.getName())
             self.add(annotation_type, roi, annotation_id)
-        self.empty_transforms()
+        self.clear_transforms()
         self.compute_transforms()
+        self.serialorder = serial_order  # needed here because serial order is changed when adding a section
 
     def save(self):
+        """Saves the wafer annotations to the .magc file"""
         IJ.log("Saving ...")
         self.manager_to_wafer()
         config = ConfigParser.ConfigParser()
-
-        for annotation_type in [
-            AnnotationType.SECTION,
-            AnnotationType.ROI,
-            AnnotationType.FOCUS,
-            AnnotationType.MAGNET,
-            AnnotationType.LANDMARK,
-        ]:
+        for annotation_type in AnnotationType.all():
             annotations = getattr(self, annotation_type.name)
             if annotations:
                 config.add_section(annotation_type.name)
@@ -275,7 +373,6 @@ class Wafer(object):
                 for id in sorted(annotations.keys()):
                     header = "{}.{:04}".format(annotation_type.name, id)
                     config.add_section(header)
-
                     if annotation_type in [
                         AnnotationType.SECTION,
                         AnnotationType.ROI,
@@ -284,7 +381,7 @@ class Wafer(object):
                         config.set(
                             header,
                             "polygon",
-                            points_to_flat_string(annotations[id].points),
+                            self.GC.points_to_flat_string(annotations[id].points),
                         )
                         if annotation_type in [
                             AnnotationType.SECTION,
@@ -293,7 +390,7 @@ class Wafer(object):
                             config.set(
                                 header,
                                 "center",
-                                point_to_flat_string(annotations[id].centroid),
+                                self.GC.point_to_flat_string(annotations[id].centroid),
                             )
                             config.set(header, "area", str(annotations[id].area))
                             config.set(
@@ -308,11 +405,10 @@ class Wafer(object):
                         config.set(
                             header,
                             "location",
-                            point_to_flat_string(annotations[id].centroid),
+                            self.GC.point_to_flat_string(annotations[id].centroid),
                         )
                 config.add_section("end_{}".format(annotation_type.name))
-
-        for order_name in ["serialorder", "tsporder"]:
+        for order_name in ["serialorder", "stageorder"]:
             config.add_section(order_name)
             order = getattr(self, order_name)
             if not order:
@@ -379,7 +475,9 @@ class Wafer(object):
                                 self.landmarks[id].centroid[1]
                                 if id in self.landmarks.keys()
                                 else "",
-                                self.tsporder[id] if len(self.tsporder) > id else "",
+                                self.stageorder[id]
+                                if len(self.stageorder) > id
+                                else "",
                                 self.serialorder[id]
                                 if len(self.serialorder) > id
                                 else "",
@@ -387,18 +485,22 @@ class Wafer(object):
                         ],
                     )
                 )
-                # handle case: more landmarks than sections
+                # unusual case: if there are more landmarks than sections
                 for i in range(len(self.sections), len(self.landmarks)):
                     f.write(
                         ",,,,,,,,,{},{},,".format(
                             self.landmarks[i].centroid[0], self.landmarks[i].centroid[1]
                         )
                     )
-
                 f.write("\n")
-        IJ.log("Saved to {}".format(csv_path))
+        IJ.log("Annotations saved to {}".format(csv_path))
 
     def close_mode(self):
+        """
+        1.Saves the current wafer
+        2.Closes the current display mode
+        3.Restores the standard GUI key listeners
+        """
         self.save()
         if self.mode is Mode.GLOBAL:
             self.image.hide()
@@ -409,28 +511,35 @@ class Wafer(object):
         map(IJ.getInstance().addKeyListener, initial_ij_key_listeners)
 
     def start_local_mode(self):
+        """Starts local display mode"""
         IJ.log("Starting local mode ...")
         self.mode = Mode.LOCAL
-        self.compute_transforms()  # 0.006s
-        self.create_local_stack()  # 0.5s
-        self.wafer_to_manager()  # 0.1s
+        self.compute_transforms()
+        self.create_local_stack()
+        self.wafer_to_manager()
         self.set_listeners()
         self.manager.runCommand("UseNames", "false")
-        self.manager.runCommand("Show None")  # 0.0s
+        self.manager.runCommand("Show None")
         set_roi_and_update_roi_manager(0)  # select first ROI
-        self.arrange_windows()  # 0.3
+        self.arrange_windows()
 
     def compute_transforms(self):
+        """
+        1.self.transforms[section_key] transforms the global wafer image
+        to an image in which the section section_key is centered at 0
+        and has an angle of 0 degrees
+        2.the poly_transforms are almost like the self.transforms except that
+        they contain an offset due to the fact that an ImagePlus is displayed
+        with their top-left corner at 0,0 and not at -w/2,-h/2
+        """
         _, _, display_size, _ = self.get_display_parameters()
         self.local_display_size = display_size
-
         for id in self.sections:
             # image transform
             aff = AffineTransform2D()
             aff.translate([-v for v in self.sections[id].centroid])
-            aff.rotate(self.sections[id].angle * Math.PI / 180)
+            aff.rotate(self.sections[id].angle * Math.PI / 180.0)
             self.transforms[id] = aff
-
             # poly transform (there is an offset)
             aff_copy = aff.copy()
             poly_translation = AffineTransform2D()
@@ -439,18 +548,26 @@ class Wafer(object):
             self.poly_transforms_inverse[id] = self.poly_transforms[id].inverse()
 
     def create_local_stack(self):
+        """Creates the local stack with imglib2 framework"""
+        display_params = (
+            [-intr(0.5 * v) for v in self.local_display_size],
+            [intr(0.5 * v) for v in self.local_display_size],
+        )
+        sorted_section_keys = sorted(self.sections)
         imgs = [
             Views.interval(
                 RV.transform(
                     Views.interpolate(
-                        Views.extendZero(self.img_global), NLinearInterpolatorFactory()
+                        Views.extendZero(self.img_global),
+                        NLinearInterpolatorFactory()
+                        # Views.extendZero(self.img_global), NearestNeighborInterpolatorFactory() # if scrolling is too slow
                     ),
-                    self.transforms[id],
+                    self.transforms[sorted_section_keys[o]],
                 ),
-                [-int(0.5 * v) for v in self.local_display_size],
-                [int(0.5 * v) for v in self.local_display_size],
+                display_params[0],
+                display_params[1],
             )
-            for id in sorted(self.sections)
+            for o in self.serialorder
         ]
         self.img_local = Views.permute(
             Views.addDimension(Views.stack(imgs), 0, 0), 3, 2
@@ -459,22 +576,143 @@ class Wafer(object):
         self.image_local = IJ.getImage()
 
     def set_listeners(self):
+        """Sets key and mouse wheel listeners"""
         add_key_listener_everywhere(KeyListener())
         add_mouse_wheel_listener_everywhere(MouseWheelListener())
 
     def add(self, annotation_type, poly, annotation_id, template=None):
+        """Adds an annotation to the wafer instace"""
+        if (
+            annotation_type is AnnotationType.SECTION
+            and annotation_id not in self.sections
+        ):
+            # appends to serial order only if new section
+            self.serialorder.append(len(self))
         if self.mode is Mode.GLOBAL:
             getattr(self, annotation_type.name)[annotation_id] = Annotation(
                 annotation_type, poly, annotation_id
             )
         else:
+            # transform to glocal coordinates when adding from local mode
             getattr(self, annotation_type.name)[annotation_id] = Annotation(
                 annotation_type,
-                transform_points_to_poly(
-                    poly_to_points(poly), self.poly_transforms_inverse[annotation_id]
+                self.GC.transform_points_to_poly(
+                    self.GC.poly_to_points(poly),
+                    self.poly_transforms_inverse[annotation_id],
                 ),
                 annotation_id,
             )
+
+    def add_section(self, poly, annotation_id):
+        self.add(AnnotationType.SECTION, poly, annotation_id)
+
+    def add_roi(self, poly, annotation_id):
+        self.add(AnnotationType.ROI, poly, annotation_id)
+
+    def add_magnet(self, poly, annotation_id):
+        self.add(AnnotationType.MAGNET, poly, annotation_id)
+
+    def add_focus(self, poly, annotation_id):
+        self.add(AnnotationType.FOCUS, poly, annotation_id)
+
+    def remove_current(self):
+        if self.mode is Mode.GLOBAL:
+            return
+        selected_indexes = self.manager.getSelectedIndexes()
+        if len(selected_indexes) != 1:
+            IJ.showMessage(
+                "Warning",
+                "To delete an annotation with [x] one and only one annotation must be selected in blue in the annotation manager",
+            )
+            return
+        selected_poly = self.manager.getRoi(selected_indexes[0])
+        poly_name = selected_poly.getName()
+        annotation_type, annotation_id = type_id(poly_name)
+        if annotation_type in [
+            AnnotationType.MAGNET,
+            AnnotationType.ROI,
+            AnnotationType.FOCUS,
+        ]:
+            if get_OK("Delete {}?".format(poly_name)):
+                delete_selected_roi()
+                self.image.killRoi()
+                del getattr(self, annotation_type.name)[annotation_id]
+                self.manager.select(
+                    get_roi_index_by_name(str(self.sections[annotation_id]))
+                )  # select the section
+        elif annotation_type is AnnotationType.SECTION:
+            # deleting a sections also deletes the linked roi,focus,magnet annotations
+            section_roi_index = get_roi_index_by_name(str(self.sections[annotation_id]))
+            linked_annotation_types = []
+            message = ""
+            for _type in [
+                AnnotationType.ROI,
+                AnnotationType.FOCUS,
+                AnnotationType.MAGNET,
+            ]:
+                linked_annotation = getattr(self, _type.name).get(annotation_id)
+                if linked_annotation:
+                    message += "{}\n \n".format(str(linked_annotation))
+                    linked_annotation_types.append(_type)
+            message = "".join(
+                [
+                    "Delete {}?".format(poly_name),
+                    "\n \nIt will also delete\n \n" if message else "",
+                    message,
+                ]
+            )
+            if get_OK(message):
+                if self.image.getNSlices() == 1:
+                    if get_OK(
+                        "Case not yet handled: you are trying to delete the only existing section."
+                        + "\n\nThe plugin will close. Please delete the .magc file and start over from scratch instead.\n\nContinue?"
+                    ):
+                        self.image.close()
+                        self.manager.close()
+                        sys.exit()
+                    else:
+                        return
+                self.image.killRoi()
+                # delete linked annotations in manager and in wafer
+                for linked_annotation_type in linked_annotation_types:
+                    index = get_roi_index_by_name(
+                        str(getattr(self, linked_annotation_type.name)[annotation_id])
+                    )
+                    delete_roi_by_index(index)
+                    del getattr(self, linked_annotation_type.name)[annotation_id]
+                # delete section in manager
+                section_roi_index = get_roi_index_by_name(
+                    str(self.sections[annotation_id])
+                )
+                delete_roi_by_index(section_roi_index)
+
+                # rearrange serial order
+                # 1. delete the serialorder entry of that section
+                del self.serialorder[sorted(self.sections.keys()).index(annotation_id)]
+                # 2. decrements the serialorder id of the sections with an id greater than
+                # the one that was deleted
+                self.serialorder = [
+                    o - 1
+                    if (o > sorted(self.sections.keys()).index(annotation_id))
+                    else o
+                    for o in self.serialorder
+                ]
+
+                del self.sections[annotation_id]
+                del self.transforms[annotation_id]
+                del self.poly_transforms[annotation_id]
+                del self.poly_transforms_inverse[annotation_id]
+
+                self.image.close()
+                self.manager.reset()
+
+                self.start_local_mode()
+
+                # select the next section
+                if section_roi_index < self.manager.getCount():
+                    set_roi_and_update_roi_manager(section_roi_index)
+                else:
+                    set_roi_and_update_roi_manager(self.manager.getCount() - 1)
 
     def init_images_global(self):
         self.image_global = IJ.openImage(self.image_path)
@@ -537,7 +775,7 @@ class Wafer(object):
     def get_closest(self, annotation_type, point):
         distances = sorted(
             [
-                [get_distance(point, item.centroid), item]
+                [self.GC.get_distance(point, item.centroid), item]
                 for item in getattr(self, annotation_type.name).values()
             ]
         )
@@ -549,22 +787,27 @@ class Wafer(object):
 
         section_extent = 0
         for section in self.sections.values()[: min(5, len(self.sections))]:
-            section_extent = max(section_extent, longest_diagonal(section.points))
+            section_extent = max(
+                section_extent, self.GC.longest_diagonal(section.points)
+            )
 
-        display_size = [
-            int(1.2 * section_extent),
-            int(1.2 * section_extent)
+        display_size = (
+            [intr(DISPLAY_FACTOR * section_extent)] * 2
             if not self.magnets
-            else int(1.4 * section_extent),
+            else [intr(DISPLAY_FACTOR * 1.2 * section_extent)] * 2
+        )
+
+        display_center = [
+            intr(0.5 * display_size[0]),
+            intr(0.5 * display_size[1]),
         ]
-        display_center = [int(0.5 * display_size[0]), int(0.5 * display_size[1])]
         crop_size = [2 * display_size[0], 2 * display_size[1]]
 
         if self.magnets:
             tissue_magnet_distances = []
             for magnet_id in sorted(self.magnets.keys()[: min(5, len(self.magnets))]):
                 tissue_magnet_distances.append(
-                    get_distance(
+                    self.GC.get_distance(
                         self.sections[magnet_id].centroid,
                         self.magnets[magnet_id].centroid,
                     )
@@ -574,7 +817,8 @@ class Wafer(object):
             )
         return display_center, tissue_magnet_distance, display_size, crop_size
 
-    def compute_stage_tsp_order(self):
+    def compute_stage_order(self):
+        """Computes the stage order by solving a TSP on the section centroids"""
         center_points = [
             pFloat(*wafer.sections[section_key].centroid)
             for section_key in sorted(self.sections)
@@ -587,7 +831,47 @@ class Wafer(object):
             distances[a][b] = distances[b][a] = center_points[a].distance(
                 center_points[b]
             )
-        self.tsporder = self.tsp_orderer.compute_tsp_order(distances)
+        self.stageorder = self.tsp_solver.compute_tsp_order(distances)
+
+    def update_section(self, section_id, transform, local_view):
+        """
+        Updates the location of a section by applying transform.
+        Typically used by the MagReorderer after transforms have been
+        found to stack the sections in serial order
+        """
+        # IJ.log("updating section {} with transform {}".format(section_id, transform))
+        current_mode = self.mode
+        self.mode = Mode.GLOBAL
+        for annotation_type in AnnotationType.all():
+            if hasattr(self, annotation_type.name):
+                if section_id in getattr(self, annotation_type.name):
+                    self.add(
+                        annotation_type,
+                        self.GC.transform_points_to_poly(local_view, transform),
+                        section_id,
+                    )
+        self.mode = current_mode
+
+    def renumber_sections(self):
+        """Renumbering the sections to have consecutive numbers without gaps:
+            "0,1,4,5,7 -> 0,1,2,3,4"
+        """
+        current_serial_order = copy.deepcopy(self.serialorder)
+        if self.mode is Mode.LOCAL:
+            self.close_mode()
+            self.start_global_mode()
+        for new_key, key in enumerate(sorted(self.sections)):
+            if new_key != key:
+                for annotation_type in AnnotationType.all():
+                    annotation = getattr(self, annotation_type.name).get(key)
+                    if annotation:
+                        self.add(annotation_type, annotation.poly, new_key)
+                        del getattr(self, annotation_type.name)[key]
+        self.clear_transforms()
+        self.compute_transforms()
+        self.wafer_to_manager()
+        self.serialorder = current_serial_order
+        IJ.log("{} sections have been renumbered".format(len(self)))
 
 
 class Annotation(object):
@@ -595,7 +879,7 @@ class Annotation(object):
         self._type = annotation_type
         self.poly = poly
         self.id = id
-        self.points = poly_to_points(poly)
+        self.points = GeometryCalculator.poly_to_points(poly)
         self.centroid = self.compute_centroid()
         self.area = poly.getStatistics().pixelCount
         self.angle = self.compute_angle()
@@ -618,14 +902,185 @@ class Annotation(object):
     def compute_centroid(self):
         if len(self) == 1:
             return self.points[0]
-        return list(points_to_poly(self.points).getContourCentroid())
+        return list(GeometryCalculator.points_to_poly(self.points).getContourCentroid())
 
     def compute_angle(self):
         if len(self) < 2:
             return None
-        return self.poly.getFloatAngle(
+        return self.poly.getFloatAngle(  # TODO: use class method?
             self.points[0][0], self.points[0][1], self.points[1][0], self.points[1][1],
         )
+
+
+class GeometryCalculator(object):
+    @staticmethod
+    def get_distance(p_1, p_2):
+        """Distance between two points"""
+        return Math.sqrt((p_2[0] - p_1[0]) ** 2 + (p_2[1] - p_1[1]) ** 2)
+
+    @classmethod
+    def longest_diagonal(cls, points):
+        """Longest pairwise distance among all points"""
+        max_diag = 0
+        for p1, p2 in itertools.combinations(points, 2):
+            max_diag = max(cls.get_distance(p1, p2), max_diag)
+        return max_diag
+
+    @staticmethod
+    def points_to_poly(points):
+        """From list of points to Fiji pointroi or polygonroi"""
+        if len(points) == 1:
+            return PointRoi(*[float(v) for v in points[0]])
+        if len(points) == 2:
+            polygon_type = PolygonRoi.POLYLINE
+        elif len(points) > 2:
+            polygon_type = PolygonRoi.POLYGON
+        return PolygonRoi(
+            [float(point[0]) for point in points],
+            [float(point[1]) for point in points],
+            polygon_type,
+        )
+
+    @staticmethod
+    def poly_to_points(poly):
+        float_polygon = poly.getFloatPolygon()
+        return [[x, y] for x, y in zip(float_polygon.xpoints, float_polygon.ypoints)]
+
+    @staticmethod
+    def points_to_flat_string(points):
+        """[[1,2],[3,4]] -> 1,2,3,4"""
+        points_flat = []
+        for point in points:
+            points_flat.append(point[0])
+            points_flat.append(point[1])
+        points_string = ",".join([str(round(x, 3)) for x in points_flat])
+        return points_string
+
+    @staticmethod
+    def point_to_flat_string(point):
+        """[1,2] -> 1,2"""
+        flat_string = ",".join([str(round(x, 3)) for x in point])
+        return flat_string
+
+    @staticmethod
+    def points_to_xy(points):
+        """[[1,2],[3,4]] -> [(1,3),(2,4)]"""
+        return zip(*points)
+
+    @staticmethod
+    def xy_to_points(x, y):
+        return zip(x, y)
+
+    @staticmethod
+    def transform_points(source_points, aff):
+        target_points = []
+        for source_point in source_points:
+            target_point = jarray.array([0, 0], "d")
+            aff.apply(source_point, target_point)
+            target_points.append(target_point)
+        return target_points
+
+    @staticmethod
+    def to_imglib2_aff(trans):
+        mat_data = jarray.array([[0, 0, 0], [0, 0, 0]], java.lang.Class.forName("[D"))
+        trans.toMatrix(mat_data)
+        imglib2_transform = AffineTransform2D()
+        imglib2_transform.set(mat_data)
+        return imglib2_transform
+
+    @classmethod
+    def transform_points_to_poly(cls, source_points, aff):
+        target_points = cls.transform_points(source_points, aff)
+        return cls.points_to_poly(target_points)
+
+    @staticmethod
+    def affine_t(x_in, y_in, x_out, y_out):
+        """Fits an affine transform to given points"""
+        X = Matrix(
+            jarray.array(
+                [[x, y, 1] for (x, y) in zip(x_in, y_in)], java.lang.Class.forName("[D")
+            )
+        )
+        Y = Matrix(
+            jarray.array(
+                [[x, y, 1] for (x, y) in zip(x_out, y_out)],
+                java.lang.Class.forName("[D"),
+            )
+        )
+        aff = X.solve(Y)
+        return aff
+
+    @staticmethod
+    def apply_affine_t(x_in, y_in, aff):
+        X = Matrix(
+            jarray.array(
+                [[x, y, 1] for (x, y) in zip(x_in, y_in)], java.lang.Class.forName("[D")
+            )
+        )
+        Y = X.times(aff)
+        x_out = [float(y[0]) for y in Y.getArrayCopy()]
+        y_out = [float(y[1]) for y in Y.getArrayCopy()]
+        return x_out, y_out
+
+    @staticmethod
+    def invert_affine_t(aff):
+        return aff.inverse()
+
+    @staticmethod
+    def rigid_t(x_in, y_in, x_out, y_out):
+        rigidModel = RigidModel2D()
+        pointMatches = HashSet()
+        for x_i, y_i, x_o, y_o in zip(x_in, y_in, x_out, y_out):
+            pointMatches.add(PointMatch(Point([x_i, y_i]), Point([x_o, y_o]),))
+        rigidModel.fit(pointMatches)
+        return rigidModel
+
+    @staticmethod
+    def apply_rigid_t(x_in, y_in, rigid_model):
+        x_out = []
+        y_out = []
+        for x_i, y_i in zip(x_in, y_in):
+            x_o, y_o = rigid_model.apply([x_i, y_i])
+            x_out.append(x_o)
+            y_out.append(y_o)
+        return x_out, y_out
+
+    @classmethod
+    def get_imglib2_transform_scaling(cls, transform):
+        s1 = [0, 0]
+        s2 = [1000, 1000]
+        t1, t2 = cls.transform_points([s1, s2], transform)
+        return cls.get_distance(t1, t2) / float(cls.get_distance(s1, s2))
+
+    # @classmethod
+    # def apply_t(x_in, y_in, transform):
+    #     if len(source_section) == 2:
+    #         compute_t = cls.rigid_t
+    #         apply_t = cls.apply_rigid_t
+    #     else:
+    #         compute_t = cls.affine_t
+    #         apply_t = cls.apply_affine_t
+
+    @classmethod
+    def propagate_points(cls, source_section, source_points, target_section):
+        """Transforms points linked to a source section to a target section"""
+        source_section_x, source_section_y = cls.points_to_xy(source_section)
+        source_points_x, source_points_y = cls.points_to_xy(source_points)
+        target_section_x, target_section_y = cls.points_to_xy(target_section)
+        if len(source_section) == 2:
+            compute_t = cls.rigid_t
+            apply_t = cls.apply_rigid_t
+        else:
+            compute_t = cls.affine_t
+            apply_t = cls.apply_affine_t
+        trans = compute_t(
+            source_section_x, source_section_y, target_section_x, target_section_y
+        )
+        target_points_x, target_points_y = apply_t(
+            source_points_x, source_points_y, trans
+        )
+        target_points = [[x, y] for x, y in zip(target_points_x, target_points_y)]
+        return target_points
 
 
 class TSPSolver(object):
@@ -649,15 +1104,21 @@ class TSPSolver(object):
             r"https://raw.githubusercontent.com/templiert/MagFinder/master/cygwin1.dll"
         )
         download_msg = (
-            "Downloading Windows-10 precompiled cygwin1.dll from \n \n{}\n \n"
-            "That file is needed to compute the section order that minimizes stage travel."
+            "Downloading {} to the Fiji plugins directory from \n \n{}\n \n"
+            "The file is needed to compute the 'stage order' that minimizes stage travel"
+            "\nand the serial order of the sections."
             "\n \nDo you agree? "
         )
         if "windows" in System.getProperty("os.name").lower():
             # download cygwin1.dll
             if not os.path.isfile(cygwindll_path):
                 # download cygwin1.dll
-                if get_OK(download_msg.format(cygwindll_url)):
+                if get_OK(
+                    download_msg.format(
+                        "Windows-10 precompiled cygwin1.dll", cygwindll_url
+                    ),
+                    window_name="Download?",
+                ):
                     try:
                         FileUtils.copyURLToFile(
                             URL(cygwindll_url), File(cygwindll_path)
@@ -669,7 +1130,10 @@ class TSPSolver(object):
                 [concorde_path, linkern_path], [concorde_url, linkern_url]
             ):
                 if not os.path.isfile(path):
-                    if get_OK(download_msg.format(url)):
+                    if get_OK(
+                        download_msg.format("solver for traveling salesman", url),
+                        window_name="Download?",
+                    ):
                         self.download_unzip(url, path)
         if not all(
             (os.path.isfile(p) for p in (cygwindll_path, concorde_path, linkern_path))
@@ -720,10 +1184,8 @@ class TSPSolver(object):
                 order = [int(line.split(" ")[0]) for line in f.readlines()[1:]]
         elif "concorde.exe" in solver_path:
             with open(solution_path, "r") as f:
-                order = [
-                    int(x)
-                    for x in f.readlines()[1].replace("\n", "").split(" ").remove("")
-                ]
+                lines = f.readlines()
+                order = [int(x) for x in lines[1].replace(" \n", "").split(" ")]
         # remove the dummy city 0 and apply a -1 offset
         order.remove(0)
         order = [o - 1 for o in order]
@@ -736,7 +1198,9 @@ class TSPSolver(object):
             ),
         ):
             IJ.log(
-                "The total cost of the {}optimized order is {}".format(name, int(cost))
+                "The total cost of the {}optimized order is {} (a.u.)".format(
+                    name, intr(cost)
+                )
             )
         # delete temporary files
         for p in [solution_path, tsplib_path]:
@@ -759,7 +1223,7 @@ class TSPSolver(object):
             distances = [0] * len(mat)  # dummy city
             for i, j in itertools.combinations(range(len(mat)), 2):
                 distance = mat[i][j]
-                distances.append(int(float(distance)))
+                distances.append(intr(distance))
             for id, distance in enumerate(distances):
                 f.write(str(distance))
                 if (id + 1) % 10 == 0:
@@ -790,17 +1254,9 @@ class TSPSolver(object):
             return
         try:
             order = self.order_from_mat(pairwise_costs, self.root, solver_path)
-            IJ.log(
-                "The optimal section order to minimize stage travel is: {}".format(
-                    order
-                )
-            )
+            IJ.log("The optimal order is: {}".format(order))
         except (Exception, java_exception) as e:
-            IJ.log(
-                "The path to minimize stage movement could not be computed: {}".format(
-                    e
-                )
-            )
+            IJ.log("The order could not be computed: {}".format(e))
             return []
         return order
 
@@ -922,8 +1378,23 @@ def handle_mouse_wheel_local(mouseWheelEvent):
 # --- Key listeners --- #
 class KeyListener(KeyAdapter):
     def keyPressed(self, event):
+        keycode = event.getKeyCode()
         event.consume()
-        if wafer.mode is Mode.GLOBAL:
+        if event.getKeyCode() == KeyEvent.VK_J and wafer.mode is Mode.GLOBAL:
+            reorderer = MagReorderer.MagReorderer(wafer)
+            reorderer.reorder()
+        elif keycode == KeyEvent.VK_S:
+            wafer.save()
+        elif keycode == KeyEvent.VK_Q:  # terminate and save
+            wafer.manager_to_wafer()  # will be repeated in close_mode but it's OK
+            wafer.compute_stage_order()
+            wafer.close_mode()
+            wafer.manager.close()
+        elif keycode == KeyEvent.VK_O:
+            wafer.manager_to_wafer()
+            wafer.compute_stage_order()
+            wafer.save()
+        elif wafer.mode is Mode.GLOBAL:
             handle_key_global(event)
         elif wafer.mode is Mode.LOCAL:
             handle_key_local(event)
@@ -933,8 +1404,8 @@ def handle_key_global(keyEvent):
     keycode = keyEvent.getKeyCode()
     if keycode == KeyEvent.VK_A:
         handle_key_a()
-    if keycode == KeyEvent.VK_S:
-        wafer.save()
+    if keycode == KeyEvent.VK_N:
+        wafer.renumber_sections()
     if keycode == KeyEvent.VK_T:
         if wafer.sections:
             wafer.close_mode()
@@ -943,14 +1414,6 @@ def handle_key_global(keyEvent):
             IJ.showMessage(
                 "Cannot toggle to local mode because there are no sections defined."
             )
-    if keycode == KeyEvent.VK_Q:  # terminate and save
-        wafer.manager_to_wafer()  # will be repeated in close_mode but it's OK
-        wafer.compute_stage_tsp_order()
-        wafer.close_mode()
-    if keycode == KeyEvent.VK_O:
-        wafer.manager_to_wafer()
-        wafer.compute_stage_tsp_order()
-        wafer.save()
     if keycode == KeyEvent.VK_H:
         IJ.showMessage("Help for global mode", HELP_MSG_GLOBAL)
     if keycode == KeyEvent.VK_1:
@@ -977,36 +1440,9 @@ def handle_key_global(keyEvent):
         handle_key_m_global()
 
 
-def handle_key_m_global():
-    manager = wafer.manager
-    for roi in manager.iterator():
-        annotation_type, annotation_id = type_id(roi.getName())
-        if annotation_type is AnnotationType.SECTION:
-            roi.setName(str(annotation_id))
-            roi.setStrokeWidth(8)
-        else:
-            roi.setName("")
-            roi.setStrokeWidth(1)
-    IJ.run(
-        "Labels...",
-        (
-            "color=white font="
-            + str(int(wafer.image.getWidth() / 400))
-            + " show use draw bold"
-        ),
-    )
-    flattened = wafer.image.flatten()
-    flattened_path = os.path.join(wafer.root, "overview_global.jpg")
-    IJ.save(flattened, flattened_path)
-    IJ.log("Flattened global image saved to {}".format(flattened_path))
-    flattened.close()
-    wafer.start_global_mode()
-
-
 def handle_key_local(keyEvent):
     keycode = keyEvent.getKeyCode()
     manager = get_roi_manager()
-
     if keycode == KeyEvent.VK_A:
         handle_key_a()
     if keycode == KeyEvent.VK_X:
@@ -1015,10 +1451,6 @@ def handle_key_local(keyEvent):
         handle_key_p_local()
     if keycode == KeyEvent.VK_M:
         handle_key_m_local()
-    if keycode == KeyEvent.VK_Q:
-        wafer.manager_to_wafer()  # will be repeated in close_mode but it's OK
-        wafer.compute_stage_tsp_order()
-        wafer.close_mode()
     if keycode == KeyEvent.VK_D:
         move_roi_manager_selection(-1)
     if keycode == KeyEvent.VK_F:
@@ -1043,18 +1475,40 @@ def handle_key_local(keyEvent):
     if keycode == KeyEvent.VK_T:
         wafer.close_mode()
         wafer.start_global_mode()
-    if keycode == KeyEvent.VK_S:
-        wafer.save()
-    if keycode == KeyEvent.VK_O:
-        wafer.manager_to_wafer()
-        wafer.compute_stage_tsp_order()
-        wafer.save()
     if keycode == KeyEvent.VK_H:
         IJ.showMessage("Help for local mode", HELP_MSG_LOCAL)
     keyEvent.consume()
 
 
+def handle_key_m_global():
+    """Saves overview"""
+    manager = wafer.manager
+    for roi in manager.iterator():
+        annotation_type, annotation_id = type_id(roi.getName())
+        if annotation_type is AnnotationType.SECTION:
+            roi.setName(str(annotation_id))
+            roi.setStrokeWidth(8)
+        else:
+            roi.setName("")
+            roi.setStrokeWidth(1)
+    IJ.run(
+        "Labels...",
+        (
+            "color=white font="
+            + str(int(wafer.image.getWidth() / 400.0))
+            + " show use draw bold"
+        ),
+    )
+    flattened = wafer.image.flatten()
+    flattened_path = os.path.join(wafer.root, "overview_global.jpg")
+    IJ.save(flattened, flattened_path)
+    IJ.log("Flattened global image saved to {}".format(flattened_path))
+    flattened.close()
+    wafer.start_global_mode()
+
+
 def handle_key_m_local():
+    """Saves overview"""
     montageMaker = MontageMaker()
     stack = wafer.image.getStack()
     n_slices = wafer.image.getNSlices()
@@ -1073,12 +1527,12 @@ def handle_key_m_local():
         handle_size = 5
         stroke_size = 3
     else:
-        handle_size = 5 * int(im_w / LOCAL_SIZE_STANDARD)
+        handle_size = 5 * intr(im_w / LOCAL_SIZE_STANDARD)
         stroke_size = 3 * im_w / LOCAL_SIZE_STANDARD
 
     flattened_ims = []
     for id, section_id in enumerate(sorted(wafer.sections.keys())):
-        im_p = stack.getProcessor(id + 1).duplicate()
+        im_p = stack.getProcessor(wafer.serialorder.index(id) + 1).duplicate()
         flattened = ImagePlus("flattened", im_p)
 
         for roi in wafer.manager.iterator():
@@ -1114,86 +1568,11 @@ def handle_key_m_local():
 
 
 def handle_key_x_local():
-    manager = wafer.manager
-    selected_indexes = manager.getSelectedIndexes()
-    if len(selected_indexes) != 1:
-        IJ.showMessage(
-            "Warning",
-            "To delete an annotation with [x] an annotation must be selected in blue in the annotation manager",
-        )
-        return
-
-    selected_poly = manager.getRoi(selected_indexes[0])
-    poly_name = selected_poly.getName()
-    annotation_type, annotation_id = type_id(poly_name)
-
-    if annotation_type in [
-        AnnotationType.MAGNET,
-        AnnotationType.ROI,
-        AnnotationType.FOCUS,
-    ]:
-        if get_OK("Delete {}?".format(poly_name)):
-            delete_selected_roi()
-            wafer.image.killRoi()
-            del getattr(wafer, annotation_type.name)[annotation_id]
-            manager.select(
-                get_roi_index_by_name(str(wafer.sections[annotation_id]))
-            )  # select the section
-    elif annotation_type is AnnotationType.SECTION:
-        section_roi_index = get_roi_index_by_name(str(wafer.sections[annotation_id]))
-        linked_annotation_types = []
-        message = ""
-        for _type in [
-            AnnotationType.ROI,
-            AnnotationType.FOCUS,
-            AnnotationType.MAGNET,
-        ]:
-            linked_annotation = getattr(wafer, _type.name).get(annotation_id)
-            if linked_annotation:
-                message += "{}\n \n".format(str(linked_annotation))
-                linked_annotation_types.append(_type)
-        message = "".join(
-            [
-                "Delete {}?".format(poly_name),
-                "\n \nIt will also delete\n \n" if message else "",
-                message,
-            ]
-        )
-        if get_OK(message):
-            if wafer.image.getNSlices() == 1:
-                if get_OK(
-                    "Case not yet handled: you are trying to delete the only existing section."
-                    + "\n\nFiji will close. Please delete the .ini file and start over from scratch instead.\n\nContinue?"
-                ):
-                    wafer.image.close()
-                    manager.close()
-                    sys.exit()
-                else:
-                    return
-            wafer.image.killRoi()
-            for linked_annotation_type in linked_annotation_types:
-                index = get_roi_index_by_name(
-                    str(getattr(wafer, linked_annotation_type.name)[annotation_id])
-                )
-                delete_roi_by_index(index)
-                del getattr(wafer, linked_annotation_type.name)[annotation_id]
-            del wafer.sections[annotation_id]
-            del wafer.transforms[annotation_id]
-            del wafer.poly_transforms[annotation_id]
-            del wafer.poly_transforms_inverse[annotation_id]
-
-            wafer.image.close()
-            manager.reset()
-            wafer.start_local_mode()
-
-            # select the next section
-            if section_roi_index < manager.getCount():
-                set_roi_and_update_roi_manager(section_roi_index)
-            else:
-                set_roi_and_update_roi_manager(manager.getCount() - 1)
+    wafer.remove_current()
 
 
 def handle_key_p_local():
+    """Propagation tool"""
     manager = wafer.manager
     manager.runCommand("Update")  # to update the current ROI
     wafer.manager_to_wafer()
@@ -1213,7 +1592,6 @@ def handle_key_p_local():
             "Sections cannot be propagated. Only rois, focus, magnets can be propagated",
         )
         return
-
     min_section_id = min(wafer.sections.keys())
     max_section_id = max(wafer.sections.keys())
 
@@ -1234,7 +1612,7 @@ def handle_key_p_local():
     )
     gd.addButton(
         "First half of the sections {}-{}".format(
-            min_section_id, int(max_section_id / 2.0)
+            min_section_id, intr(max_section_id / 2.0)
         ),
         ButtonClick(),
     )
@@ -1256,14 +1634,14 @@ def handle_key_p_local():
     # (adding a poly in global coordinates)
     wafer.mode = Mode.GLOBAL
     for input_index in valid_input_indexes:
-        propagated_points = propagate_points(
+        propagated_points = GeometryCalculator.propagate_points(
             wafer.sections[annotation_id].points,
             getattr(wafer, annotation_type.name)[annotation_id].points,
             wafer.sections[input_index].points,
         )
         wafer.add(
             annotation_type,
-            points_to_poly(propagated_points),
+            GeometryCalculator.points_to_poly(propagated_points),
             input_index,
             template=annotation_id,
         )
@@ -1283,13 +1661,13 @@ def handle_key_a():
             "Info", MSG_DRAWN_ROI_MISSING,
         )
         return
-    if drawn_roi.getState() == PolygonRoi.CONSTRUCTING and drawn_roi.size() > 3:
+    if drawn_roi.getState() is PolygonRoi.CONSTRUCTING and drawn_roi.size() > 3:
         return
 
     name_suggestions = []
     if wafer.mode is Mode.LOCAL:
         slice_id = wafer.image.getSlice()
-        section_id = sorted(wafer.sections.keys())[slice_id - 1]
+        section_id = sorted(wafer.sections.keys())[wafer.serialorder[slice_id - 1]]
 
         if drawn_roi.size() == 2:
             name_suggestions.append("magnet-{:04}".format(section_id))
@@ -1322,7 +1700,7 @@ def handle_key_a():
     if annotation_name is None:
         return
 
-    points = poly_to_points(drawn_roi)
+    points = GeometryCalculator.poly_to_points(drawn_roi)
     # handle cases when the drawn_roi is not closed
     if drawn_roi.getState() == PolygonRoi.CONSTRUCTING:
         if drawn_roi.size() == 3:
@@ -1354,11 +1732,12 @@ def handle_key_a():
 
 
 def move_fov(a):
+    """Moves field of view of the image"""
     im = wafer.image
     canvas = im.getCanvas()
     r = canvas.getSrcRect()
     # adjust increment depending on zoom level
-    increment = int(40 / float(canvas.getMagnification()))
+    increment = intr(40 / float(canvas.getMagnification()))
     xPixelIncrement = 0
     yPixelIncrement = 0
     if a == "right":
@@ -1379,33 +1758,11 @@ def move_fov(a):
     im.updateAndDraw()
 
 
-# --- End Key listeners --- #
-# ----- End Listeners and handlers ----- #
-# ----- multithreading ----- #
-def start_threads(function, fractionCores=1, arguments=None, nThreads=None):
-    threads = []
-    if nThreads == None:
-        threadRange = range(
-            max(int(Runtime.getRuntime().availableProcessors() * fractionCores), 1)
-        )
-    else:
-        threadRange = range(nThreads)
-    IJ.log("Running in parallel with ThreadRange = {}".format(threadRange))
-    for p in threadRange:
-        if arguments == None:
-            thread = threading.Thread(target=function)
-        else:
-            thread = threading.Thread(group=None, target=function, args=arguments)
-        threads.append(thread)
-        thread.start()
-    for thread in threads:
-        thread.join()
+def intr(x):
+    """Float to int with rounding (instead of int(x) that does a floor)"""
+    return int(round(x))
 
 
-# ----- End multithreading ----- #
-
-
-# ----- Dialogs ----- #
 def get_name(text, default_name="", cancel_msg=None):
     gd = GenericDialog(text)
     gd.addStringField(text, default_name)
@@ -1416,8 +1773,8 @@ def get_name(text, default_name="", cancel_msg=None):
     return gd.getNextString()
 
 
-def get_OK(text):
-    gd = GenericDialog("User prompt")
+def get_OK(text, window_name="User prompt"):
+    gd = GenericDialog(window_name)
     gd.addMessage(text)
     gd.hideCancelButton()
     gd.enableYesNoCancel()
@@ -1494,6 +1851,7 @@ def thread_focus_on_OK(button):
 
 
 def focus_on_ok(dialog):
+    """Trick to preselect the OK button after a dialog has been shown"""
     ok_buttons = [
         button
         for button in list(dialog.getButtons())
@@ -1506,12 +1864,10 @@ def focus_on_ok(dialog):
         pass
 
 
-# ----- End Dialogs ----- #
-
 # ----- RoiManager functions ----- #
 def get_roi_manager():
     manager = RoiManager.getInstance()
-    if manager == None:
+    if manager is None:
         manager = RoiManager()
     return manager
 
@@ -1522,7 +1878,7 @@ def init_manager():
     manager.setTitle("Annotations")
     manager.reset()
     manager.setSize(
-        250, int(0.95 * IJ.getScreenSize().height)
+        250, intr(0.95 * IJ.getScreenSize().height)
     )  # 280 so that the title is not cut
     manager.setLocation(IJ.getScreenSize().width - manager.getSize().width, 0)
     return manager
@@ -1537,7 +1893,7 @@ def roi_manager_scroll_bottom():
     ][0]
     scrollBar = scrollPane.getVerticalScrollBar()
     barMax = scrollBar.getMaximum()
-    scrollBar.setValue(int(1.5 * barMax))
+    scrollBar.setValue(intr(1.5 * barMax))
 
 
 def move_roi_manager_selection(n):
@@ -1575,6 +1931,7 @@ def select_roi_by_name(roiName):
 
 
 def set_roi_and_update_roi_manager(roi_index, select=True):
+    """Keeps the selected annotation in the middle of the manager display"""
     manager = get_roi_manager()
     nRois = manager.getCount()
     scrollPane = [
@@ -1652,7 +2009,7 @@ def type_id(name, delimiter="-"):
 
 
 # ----- End RoiManager functions ----- #
-# ----- HTML functions ----- #
+# ----- HTML functions for help message ----- #
 def tag(text, tag):
     return "<{}>{}</{}>".format(tag, text, tag)
 
@@ -1665,153 +2022,7 @@ def print_list(*elements):
     return a
 
 
-# ----- End HTML functions ----- #
-# ----- Geometric functions ----- #
-def get_distance(p_1, p_2):
-    return Math.sqrt((p_2[0] - p_1[0]) ** 2 + (p_2[1] - p_1[1]) ** 2)
-
-
-def longest_diagonal(points):
-    max_diag = 0
-    for p1 in points:
-        for p2 in points:
-            max_diag = max(get_distance(p1, p2), max_diag)
-    return int(max_diag)
-
-
-def points_to_poly(points):
-    if len(points) == 1:
-        return PointRoi(*points[0])
-    if len(points) == 2:
-        polygon_type = PolygonRoi.POLYLINE
-    elif len(points) > 2:
-        polygon_type = PolygonRoi.POLYGON
-    return PolygonRoi(
-        [point[0] for point in points], [point[1] for point in points], polygon_type,
-    )
-
-
-def poly_to_points(poly):
-    float_polygon = poly.getFloatPolygon()
-    return [[x, y] for x, y in zip(float_polygon.xpoints, float_polygon.ypoints)]
-
-
-def points_to_flat_string(points):
-    points_flat = []
-    for point in points:
-        points_flat.append(point[0])
-        points_flat.append(point[1])
-    points_string = ",".join([str(round(x, 3)) for x in points_flat])
-    return points_string
-
-
-def point_to_flat_string(point):
-    flat_string = ",".join([str(round(x, 3)) for x in point])
-    return flat_string
-
-
-def points_to_flat(points):
-    flat = []
-    for point in points:
-        flat += point
-    return flat
-
-
-def flat_to_poly(flat):
-    if len(flat) == 2:
-        poly = Point(flat[::2], flat[1::2])
-    if len(flat) == 4:
-        poly = PolygonRoi(flat[::2], flat[1::2], PolygonRoi.POLYLINE)
-    else:
-        poly = PolygonRoi(flat[::2], flat[1::2], PolygonRoi.POLYGON)
-    return poly
-
-
-def transform_points_to_poly(source_points, aff):
-    target_points = []
-    for source_point in source_points:
-        target_point = jarray.array([0, 0], "d")
-        aff.apply(source_point, target_point)
-        target_points.append(target_point)
-    return points_to_poly(target_points)
-
-
-def affine_t(x_in, y_in, x_out, y_out):
-    X = Matrix(
-        jarray.array(
-            [[x, y, 1] for (x, y) in zip(x_in, y_in)], java.lang.Class.forName("[D")
-        )
-    )
-    Y = Matrix(
-        jarray.array(
-            [[x, y, 1] for (x, y) in zip(x_out, y_out)], java.lang.Class.forName("[D")
-        )
-    )
-    aff = X.solve(Y)
-    return aff
-
-
-def apply_affine_t(x_in, y_in, aff):
-    X = Matrix(
-        jarray.array(
-            [[x, y, 1] for (x, y) in zip(x_in, y_in)], java.lang.Class.forName("[D")
-        )
-    )
-    Y = X.times(aff)
-    x_out = [float(y[0]) for y in Y.getArrayCopy()]
-    y_out = [float(y[1]) for y in Y.getArrayCopy()]
-    return x_out, y_out
-
-
-def invert_affine_t(aff):
-    return aff.inverse()
-
-
-def rigid_t(x_in, y_in, x_out, y_out):
-    rigidModel = RigidModel2D()
-    pointMatches = HashSet()
-    for x_i, y_i, x_o, y_o in zip(x_in, y_in, x_out, y_out):
-        pointMatches.add(PointMatch(Point([x_i, y_i]), Point([x_o, y_o]),))
-    rigidModel.fit(pointMatches)
-    return rigidModel
-
-
-def apply_rigid_t(x_in, y_in, rigid_model):
-    x_out = []
-    y_out = []
-    for x_i, y_i in zip(x_in, y_in):
-        x_o, y_o = rigid_model.apply([x_i, y_i])
-        x_out.append(x_o)
-        y_out.append(y_o)
-    return x_out, y_out
-
-
-def points_to_xy(points):
-    x = [p[0] for p in points]
-    y = [p[1] for p in points]
-    return x, y
-
-
-def propagate_points(source_section, source_points, target_section):
-    source_section_x, source_section_y = points_to_xy(source_section)
-    source_points_x, source_points_y = points_to_xy(source_points)
-    target_section_x, target_section_y = points_to_xy(target_section)
-    if len(source_section) == 2:
-        compute_t = rigid_t
-        apply_t = apply_rigid_t
-    else:
-        compute_t = affine_t
-        apply_t = apply_affine_t
-
-    trans = compute_t(
-        source_section_x, source_section_y, target_section_x, target_section_y
-    )
-    target_points_x, target_points_y = apply_t(source_points_x, source_points_y, trans)
-    target_points = [[x, y] for x, y in zip(target_points_x, target_points_y)]
-    return target_points
-
-
-# ----- End Geometric functions ----- #
+# ----- End HTML functions for help message ----- #
 
 
 def pairwise(iterable):
@@ -1828,30 +2039,42 @@ if __name__ == "__main__":
         + '<p style="text-align:center"><a href="https://youtu.be/ZQLTBbM6dMA">20-minute video tutorial</a></p>'
         + tag("Navigation", "h3")
         + print_list(
-            "Zoom in/out" + print_list("[Ctrl] + Mouse wheel", "[+] / [-]",),
-            "Move up/down" + print_list("Mouse wheel", "&uarr / &darr"),
-            "Move left/right" + print_list("[Shift] + Mouse wheel", "&larr / &rarr"),
-            "Toggle filling of"
-            + print_list("sections   [1]", "rois   [2]", "focus   [3]"),
-            "[0] (number 0) toggle labels",
+            "Zoom in/out" + print_list("[Ctrl] + mouse wheel", "[+] / [-]",),
+            "Move up/down" + print_list("mouse wheel", "[&uarr] / [&darr]"),
+            "Move left/right"
+            + print_list("[Shift] + Mouse wheel", "[&larr] / [&rarr]"),
+            "Toggle"
+            + print_list(
+                "filling of sections   [1]",
+                "filling of rois   [2]",
+                "filling of focus   [3]",
+                "labels [0] (number 0)",
+            ),
         )
-        + tag("Actions", "h3")
+        + tag("Action", "h3")
         + print_list(
             "Mouse click"
             + print_list(
-                "Left - draw point",
-                "Right - join first and last points to close the polygon",
+                "Left - draws point",
+                "Right - joins first and last points to close the current polygon",
             ),
-            "[escape] Stop current drawing",
-            "[a] add an annotation that you have drawn",
-            "[t] toggle to local mode",
-            "[q] quit (everything will be saved)",
-            "[s] save (happens automatically when toggling [t] and quitting [q])",
-            "[m] export a summary image of global mode",
+            "[escape] stops current drawing",
+            "[a] adds an annotation that you have drawn",
+            "[t] toggles to local mode",
+            "[q] quits (everything will be saved)",
+            "[s] saves (happens automatically when toggling [t] and quitting [q])",
+            "[m] exports a summary image of global mode",
+            "[n] renumbers the sections to have continuous numbers without gaps (0,1,3,4,6 --> 0,1,2,3,4)",
             (
-                "[o]   (letter o) compute the section order that minimizes the travel of the microscope stage"
+                "[o]   (letter o) computes the section order that minimizes the travel of the microscope stage"
                 " (not the same as the serial sectioning order of the sections)."
-                ' The order is saved in the field "tsporder" (stands for Traveling Salesman Problem order)'
+                ' Saves the order in the .magc file in the field "stageorder"'
+            ),
+            (
+                "[j] computes the serial order based on the roi defined in the first section."
+                " Updates the section positions."
+                'Stores the serial order in the .magc file in the field "serialorder".'
+                " We recommend to save beforehand a copy of the .magc file outside of the directory"
             ),
         )
         + "<br><br><br></html>"
@@ -1867,19 +2090,18 @@ if __name__ == "__main__":
             "[e]/[r] navigate to first/last annotation",
             "If you lose the current annotation (by clicking outside of the annotation), then press [d],[f] or use the mouse wheel to make the annotation appear again.",
         )
-        + tag("Actions", "h3")
+        + tag("Action", "h3")
         + print_list(
-            "[a] create/modify an annotation",
-            "[x] delete an annotation",
-            "[t] toggle to global mode",
-            "[g] validate your modification. It happens automatically when browsing through the sections with [d]/[f], [c]/[v], [e]/[r], or with the mouse wheel",
-            "[q] quit. Everything will be saved",
-            "[s] save to file (happens already automatically when toggling [t] or quitting [q])",
-            "[m] export a summary montage",
+            "[a] creates/modifies an annotation",
+            "[t] toggles to global mode",
+            "[g] validates your modification. It happens automatically when browsing through the sections with [d]/[f], [c]/[v], [e]/[r], or with the mouse wheel",
+            "[q] quits. Everything will be saved",
+            "[s] saves to file (happens already automatically when toggling [t] or quitting [q])",
+            "[m] exports a summary montage",
             (
-                "[o]   (letter o) compute the section order that minimizes the travel of the microscope stage"
+                "[o]   (letter o) computes the section order that minimizes the travel of the microscope stage"
                 " (not the same as the serial sectioning order of the sections)."
-                ' The order is saved in the field "tsporder" (stands for Traveling Salesman Problem order)'
+                ' Saves the order in the .magc file in the field "stageorder"'
             ),
         )
         + "<br><br><br></html>"
