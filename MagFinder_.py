@@ -81,7 +81,23 @@ class AnnotationType(object):
     @classmethod
     def all(cls):
         """Returns all annotation types"""
-        return [cls.SECTION, cls.ROI, cls.FOCUS, cls.MAGNET, cls.LANDMARK]
+        return [
+            cls.SECTION,
+            cls.ROI,
+            cls.FOCUS,
+            cls.MAGNET,
+            cls.LANDMARK,
+        ]
+
+    @classmethod
+    def all_except_landmark(cls):
+        """Returns all annotation types except landmarks"""
+        return [
+            cls.SECTION,
+            cls.ROI,
+            cls.FOCUS,
+            cls.MAGNET,
+        ]
 
 
 def transfer_wafer(wafer_1, wafer_2):
@@ -107,11 +123,9 @@ def transfer_wafer(wafer_1, wafer_2):
     )
     wafer_2.clear_annotations()
     for key in sorted(wafer_1.sections):
-        for annotation_type in AnnotationType.all():
-            if (
-                hasattr(wafer_1, annotation_type.name)
-                and key in getattr(wafer_1, annotation_type.name)
-                and annotation_type is not AnnotationType.LANDMARK
+        for annotation_type in AnnotationType.all_except_landmark():
+            if hasattr(wafer_1, annotation_type.name) and key in getattr(
+                wafer_1, annotation_type.name
             ):
                 wafer_2.add(
                     annotation_type,
@@ -842,7 +856,7 @@ class Wafer(object):
         # IJ.log("updating section {} with transform {}".format(section_id, transform))
         current_mode = self.mode
         self.mode = Mode.GLOBAL
-        for annotation_type in AnnotationType.all():
+        for annotation_type in AnnotationType.all_except_landmark():
             if hasattr(self, annotation_type.name):
                 if section_id in getattr(self, annotation_type.name):
                     self.add(
@@ -862,7 +876,7 @@ class Wafer(object):
             self.start_global_mode()
         for new_key, key in enumerate(sorted(self.sections)):
             if new_key != key:
-                for annotation_type in AnnotationType.all():
+                for annotation_type in AnnotationType.all_except_landmark():
                     annotation = getattr(self, annotation_type.name).get(key)
                     if annotation:
                         self.add(annotation_type, annotation.poly, new_key)
@@ -2094,6 +2108,7 @@ if __name__ == "__main__":
         + print_list(
             "[a] creates/modifies an annotation",
             "[t] toggles to global mode",
+            "[p] propagates the current annotation to sections defined in the dialog. Section and landmark annotations cannot be propagated",
             "[g] validates your modification. It happens automatically when browsing through the sections with [d]/[f], [c]/[v], [e]/[r], or with the mouse wheel",
             "[q] quits. Everything will be saved",
             "[s] saves to file (happens already automatically when toggling [t] or quitting [q])",
