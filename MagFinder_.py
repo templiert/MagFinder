@@ -2072,6 +2072,7 @@ if __name__ == "__main__":
                 "Left - draws point",
                 "Right - joins first and last points to close the current polygon",
             ),
+            "[h] opens this help message",
             "[escape] stops current drawing",
             "[a] adds an annotation that you have drawn",
             "[t] toggles to local mode",
@@ -2106,6 +2107,7 @@ if __name__ == "__main__":
         )
         + tag("Action", "h3")
         + print_list(
+            "[h] opens this help message",
             "[a] creates/modifies an annotation",
             "[t] toggles to global mode",
             "[p] propagates the current annotation to sections defined in the dialog. Section and landmark annotations cannot be propagated",
