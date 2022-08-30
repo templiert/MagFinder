@@ -7,7 +7,7 @@ def create_empty_magc():
         "rois": {},
         "magnets": {},
         "focus": {},
-        "landmarksEM": {"source": {}, "target": {}},
+        "landmarks": {"source": {}, "target": {}},
     }
     return magc
 
@@ -77,9 +77,9 @@ def read_magc(magc_path):
                     focus_dict["polygon"] = focus_points
             magc["focus"][int(header.split(".")[1])] = focus_dict
 
-        elif header.startswith("landmarksEM."):
+        elif header.startswith("landmark."):
             landmark_id = int(header.split(".")[1])
-            magc["landmarksEM"]["source"][landmark_id] = [
+            magc["landmarks"]["source"][landmark_id] = [
                 float(x) for x in config.get(header, "location").split(",")
             ]
 
