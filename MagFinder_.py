@@ -60,6 +60,7 @@ ACCEPTED_IMAGE_FORMATS = (
     ".jpg",
     ".jpeg",
 )
+N_SUBROIS = 10
 
 
 class Mode(object):
@@ -336,7 +337,7 @@ class Wafer(object):
                         annotation.poly.setHandleSize(
                             annotation_type.handle_size_global
                         )
-                for subroi_id in range(1e1):
+                for subroi_id in range(N_SUBROIS):
                     roi = self.rois.get(ids_to_id([section_id, subroi_id]))
                     if roi is not None:
                         self.manager.addRoi(roi.poly)
@@ -362,7 +363,7 @@ class Wafer(object):
                         local_poly.setPosition(0, id_o + 1, 0)
                         local_poly.setHandleSize(annotation_type.handle_size_local)
                         self.manager.addRoi(local_poly)
-                for subroi_id in range(1e1):
+                for subroi_id in range(N_SUBROIS):
                     roi = self.rois.get(ids_to_id([section_id, subroi_id]))
                     if roi is not None:
                         local_poly = self.GC.transform_points_to_poly(
@@ -710,7 +711,7 @@ class Wafer(object):
                 if linked_annotation is not None:
                     message += "{}\n \n".format(str(linked_annotation))
                     linked_annotations.append(linked_annotation)
-            for subroi_id in range(1e1):
+            for subroi_id in range(N_SUBROIS):
                 linked_annotation = getattr(self, AnnotationType.ROI.name).get(
                     ids_to_id([annotation_id, subroi_id])
                 )
@@ -913,7 +914,7 @@ class Wafer(object):
                         section_id,
                     )
             if self.rois:
-                for subroi_id in range(1e1):
+                for subroi_id in range(N_SUBROIS):
                     roi_id = ids_to_id([section_id, subroi_id])
                     roi = self.rois.get(roi_id)
                     if roi is None:
@@ -952,7 +953,7 @@ class Wafer(object):
                         self.add(annotation_type, annotation.poly, new_key)
                         del getattr(self, annotation_type.name)[key]
                 if self.rois:
-                    for subroi_id in range(1e1):
+                    for subroi_id in range(N_SUBROIS):
                         roi_id = ids_to_id([key, subroi_id])
                         new_roi_id = ids_to_id([new_key, subroi_id])
                         roi = self.rois.get(roi_id)
@@ -969,11 +970,17 @@ class Wafer(object):
 
     def suggest_roi_ids(self, section_id):
         if not self.rois:
-            return "roi-{:04}.{:02}".format(section_id, 0)
+            return ["roi-{:04}.{:02}".format(section_id, 0)]
         existing_roi_ids = [
-            roi_id for roi_id in self.rois if roi_id_to_section_id(roi_id) == section_id
+            id_to_ids(roi_id)[1]
+            for roi_id in self.rois
+            if roi_id_to_section_id(roi_id) == section_id
         ]
-        roi_id_suggestions = [id_ for id_ in suggest_ids(existing_roi_ids) if id_ < 1e1]
+        IJ.log("existing_roi_ids " + str(existing_roi_ids))
+        roi_id_suggestions = [
+            id_ for id_ in suggest_ids(existing_roi_ids) if id_ < N_SUBROIS
+        ]
+        IJ.log("roi_id_suggestions " + str(existing_roi_ids))
         return [
             "roi-{:04}.{:02}".format(section_id, roi_id_suggestion)
             for roi_id_suggestion in roi_id_suggestions
@@ -1800,12 +1807,12 @@ def handle_key_a():
             ]
             name_suggestions += [
                 "landmark-{:04}".format(id)
-                for id in wafer.suggest_ids(AnnotationType.LANDMARK)
+                for id in wafer.suggest_annotation_ids(AnnotationType.LANDMARK)
             ]
         else:
             name_suggestions += [
                 "section-{:04}".format(id)
-                for id in wafer.suggest_ids(AnnotationType.SECTION)
+                for id in wafer.suggest_annotation_ids(AnnotationType.SECTION)
             ]
             name_suggestions += [
                 name_suggestion
@@ -2134,12 +2141,12 @@ def type_id(
 
 def ids_to_id(ids):
     """[34,1] -> 341"""
-    return ids[0] * 1e1 + ids[1]
+    return ids[0] * N_SUBROIS + ids[1]
 
 
 def id_to_ids(id_):
     """341 -> [34, 1]"""
-    return int(id_ / 1e1), int(id_ % 1e1)
+    return int(id_ / N_SUBROIS), int(id_ % N_SUBROIS)
 
 
 def roi_id_to_section_id(roi_id):
