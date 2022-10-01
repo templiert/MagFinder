@@ -677,6 +677,7 @@ class Wafer(object):
                 "To delete an annotation with [x], one and only one annotation must be selected in blue in the annotation manager",
             )
             return
+        self.save()
         selected_poly = self.manager.getRoi(selected_indexes[0])
         poly_name = selected_poly.getName()
         annotation_type, annotation_id = type_id(poly_name)
@@ -2140,8 +2141,13 @@ def type_id(
 
 
 def ids_to_id(ids):
-    """[34,1] -> 341"""
-    return ids[0] * N_SUBROIS + ids[1]
+    """
+    [34,1] -> 341
+    [34] -> 340 for backcompatibilty with single ROI per section
+    """
+    if len(ids) == 2:
+        return ids[0] * N_SUBROIS + ids[1]
+    return ids[0] * N_SUBROIS
 
 
 def id_to_ids(id_):
