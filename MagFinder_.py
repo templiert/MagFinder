@@ -677,10 +677,14 @@ class Wafer(object):
                 "To delete an annotation with [x], one and only one annotation must be selected in blue in the annotation manager",
             )
             return
-        self.save()
         selected_poly = self.manager.getRoi(selected_indexes[0])
         poly_name = selected_poly.getName()
         annotation_type, annotation_id = type_id(poly_name)
+        if annotation_type is AnnotationType.ROI:
+            section_id = roi_id_to_section_id(annotation_id)
+        else:
+            section_id = annotation_id
+        self.save()
         if annotation_type in {
             AnnotationType.MAGNET,
             AnnotationType.ROI,
@@ -691,10 +695,6 @@ class Wafer(object):
                 self.image.killRoi()
                 del getattr(self, annotation_type.name)[annotation_id]
                 # select the section
-                if annotation_type is AnnotationType.ROI:
-                    section_id = roi_id_to_section_id(annotation_id)
-                else:
-                    section_id = annotation_id
                 self.manager.select(
                     get_roi_index_by_name(str(self.sections[section_id]))
                 )
@@ -752,20 +752,18 @@ class Wafer(object):
                 delete_roi_by_index(section_roi_index)
                 # rearrange serial order
                 # 1. delete the serialorder entry of that section
-                del self.serialorder[sorted(self.sections.keys()).index(annotation_id)]
+                del self.serialorder[sorted(self.sections.keys()).index(section_id)]
                 # 2. decrements the serialorder id of the sections with an id greater than
                 # the one that was deleted
                 self.serialorder = [
-                    o - 1
-                    if (o > sorted(self.sections.keys()).index(annotation_id))
-                    else o
+                    o - 1 if (o > sorted(self.sections.keys()).index(section_id)) else o
                     for o in self.serialorder
                 ]
 
-                del self.sections[annotation_id]
-                del self.transforms[annotation_id]
-                del self.poly_transforms[annotation_id]
-                del self.poly_transforms_inverse[annotation_id]
+                del self.sections[section_id]
+                del self.transforms[section_id]
+                del self.poly_transforms[section_id]
+                del self.poly_transforms_inverse[section_id]
 
                 self.image.close()
                 self.manager.reset()
