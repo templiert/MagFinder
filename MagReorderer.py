@@ -49,6 +49,7 @@ from net.imglib2.view import Views
 ImporterOptions = importlib.import_module("loci.plugins.in.ImporterOptions")
 
 ACCEPTED_IMAGE_FORMATS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
+N_SUBROIS = 10
 
 
 def scale_model2D(model2d, factor, highres_w):
@@ -158,7 +159,8 @@ def open_crop(crop_params):
 
 
 def open_crop_parallel(
-    atom, crop_info,
+    atom,
+    crop_info,
 ):
     """There was a problem with the parallelization of this operation"""
     while atom.get() < len(crop_info):
@@ -174,7 +176,11 @@ def open_crop_parallel(
 
 
 def create_sift_parameters(
-    fdSize, initialSigma, steps, minOctaveSize, maxOctaveSize,
+    fdSize,
+    initialSigma,
+    steps,
+    minOctaveSize,
+    maxOctaveSize,
 ):
     p = FloatArray2DSIFT.Param().clone()
     p.fdSize = fdSize
@@ -377,7 +383,10 @@ class listen_to_key(KeyAdapter):
 
 def add_key_listener_everywhere(myListener):
     for elem in (
-        [IJ.getImage().getWindow(), IJ.getImage().getWindow().getCanvas(),]
+        [
+            IJ.getImage().getWindow(),
+            IJ.getImage().getWindow().getCanvas(),
+        ]
         # ui.getDefaultUI().getConsolePane().getComponent(),]
         # IJ.getInstance]
         + list(WindowManager.getAllNonImageWindows())
@@ -410,6 +419,25 @@ def intr(x):
     return int(round(x))
 
 
+def ids_to_id(ids):
+    """
+    [34,1] -> 341
+    [34] -> 340 for backcompatibilty with single ROI per section
+    """
+    if len(ids) == 2:
+        return ids[0] * N_SUBROIS + ids[1]
+    return ids[0] * N_SUBROIS
+
+
+def id_to_ids(id_):
+    """341 -> [34, 1]"""
+    return int(id_ / N_SUBROIS), int(id_ % N_SUBROIS)
+
+
+def roi_id_to_section_id(roi_id):
+    return id_to_ids(roi_id)[0]
+
+
 class MagReorderer(object):
     def __init__(self, wafer):
         self.wafer = wafer
@@ -424,7 +452,12 @@ class MagReorderer(object):
         self.working_folder = mkdir_p(
             os.path.join(self.wafer.root, "ordering_working_folder")
         )
-        self.roi_folder = mkdir_p(os.path.join(self.working_folder, "roi_images",))
+        self.roi_folder = mkdir_p(
+            os.path.join(
+                self.working_folder,
+                "roi_images",
+            )
+        )
         self.coarse_features_folder = self.get_features_folder("coarse")
         self.fine_features_folder = self.get_features_folder("fine")
         self.n_sections = len(self.wafer)
@@ -545,7 +578,7 @@ class MagReorderer(object):
 
     def get_downsampling_factor(self):
         """
-        Downsampling factor between the high-res image (used for reordering) 
+        Downsampling factor between the high-res image (used for reordering)
         and the low-res image (used for MagFinder navigation)
         """
         reader = ImageReader()
@@ -600,7 +633,9 @@ class MagReorderer(object):
 
         # fine sift matching among the neighbor pairs
         self.get_matches(
-            "fine", self.neighbor_fine_sift_matches, pairs=neighbor_pairs,
+            "fine",
+            self.neighbor_fine_sift_matches,
+            pairs=neighbor_pairs,
         )
 
         # compute order based on neighbor distances
@@ -635,7 +670,7 @@ class MagReorderer(object):
         for key in sorted(self.wafer.sections):
             highres_xy = [
                 centroid * float(self.downsampling_factor)
-                for centroid in self.wafer.rois[key].centroid
+                for centroid in self.wafer.rois[ids_to_id([key, 0])].centroid
             ]
             crop_params.append(
                 CropParam(
@@ -686,7 +721,12 @@ class MagReorderer(object):
         start_threads(
             parallel_compute_sift,
             fractionCores=1,
-            arguments=(AtomicInteger(0), roi_paths, features_folder, sift_params,),
+            arguments=(
+                AtomicInteger(0),
+                roi_paths,
+                features_folder,
+                sift_params,
+            ),
         )
         IJ.log("Computing features done.".center(100, "-"))
 
@@ -703,7 +743,11 @@ class MagReorderer(object):
         start_threads(
             deserialize_parallel,
             fractionCores=1,
-            arguments=[AtomicInteger(0), features_paths, all_features,],
+            arguments=[
+                AtomicInteger(0),
+                features_paths,
+                all_features,
+            ],
         )
         IJ.log("All features loaded")
 
@@ -737,7 +781,7 @@ class MagReorderer(object):
     def get_matches(self, sift_mode, matches_path, pairs=None):
         """
         1.computes features
-        2.computes matches        
+        2.computes matches
         """
         features_folder = self.get_features_folder(sift_mode)
         self.compute_features(self.get_sift_parameters(sift_mode), features_folder)
@@ -816,14 +860,24 @@ class MagReorderer(object):
         sorted_keys = sorted(self.wafer.sections)
         k1 = sorted_keys[self.wafer.serialorder[0]]
         roi_transform = AffineTransform2D()  # sends the roi to the center 0,0
-        roi_transform.translate([-v for v in self.wafer.rois[k1].centroid])
+        roi_transform.translate(
+            [-v for v in self.wafer.rois[ids_to_id([k1, 0])].centroid]
+        )
 
         # add the first section and its roi
         self.wafer.add_roi(
-            self.GC.transform_points_to_poly(local_roi, roi_transform.inverse(),), k1,
+            self.GC.transform_points_to_poly(
+                local_roi,
+                roi_transform.inverse(),
+            ),
+            k1,
         )
         self.wafer.add_section(
-            self.GC.transform_points_to_poly(local_roi, roi_transform.inverse(),), k1,
+            self.GC.transform_points_to_poly(
+                local_roi,
+                roi_transform.inverse(),
+            ),
+            k1,
         )
 
         # build the stack, pair by pair
@@ -833,7 +887,9 @@ class MagReorderer(object):
             k2 = sorted_keys[o2]
 
             roi_transform = AffineTransform2D()  # sends the roi to the center 0,0
-            roi_transform.translate([-v for v in self.wafer.rois[k2].centroid])
+            roi_transform.translate(
+                [-v for v in self.wafer.rois[ids_to_id([k2, 0])].centroid]
+            )
 
             # sift_transform: sends one roi to the next
             if (o2, o1) not in affine_transforms:
@@ -872,7 +928,9 @@ class MagReorderer(object):
             section_transform.preConcatenate(cumulative_local_transform)
             section_transform.preConcatenate(roi_transform.inverse())
             self.wafer.update_section(
-                k2, section_transform, local_roi,
+                k2,
+                section_transform,
+                local_roi,
             )
         self.wafer.clear_transforms()
         self.wafer.compute_transforms()
@@ -1074,4 +1132,3 @@ def ordered_transformed_imgstack(order, affine_transforms, loaded_imgs, view_spe
     # permute to use 3rd dimension as Z instead of C (natural order is XYCZT)
     # https://forum.image.sc/t/imglib2-force-wrapped-imageplus-rai-dimensions-to-xyczt/56461/2
     return Views.permute(Views.addDimension(Views.stack(imgs), 0, 0), 3, 2)
-
