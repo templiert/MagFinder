@@ -187,7 +187,9 @@ class Wafer(object):
         self.landmarks = {}
         self.transforms = {}
         self.poly_transforms = {}
+        """poly_tranforms: global to local"""
         self.poly_transforms_inverse = {}
+        """poly_tranforms_inverse: local to global"""
         # the serial order is the order in which the sections have been cut
         self.serialorder = []
         # the stageorder is the order that minimizes microscope stage travel
@@ -292,7 +294,9 @@ class Wafer(object):
                         vals = [float(x) for x in val.split(",")]
                         points = [[x, y] for x, y in zip(vals[::2], vals[1::2])]
                         self.add(
-                            annotation_type, self.GC.points_to_poly(points), id_,
+                            annotation_type,
+                            self.GC.points_to_poly(points),
+                            id_,
                         )
             elif header in ["serialorder", "stageorder"]:
                 if config.get(header, header) != "[]":
@@ -414,7 +418,9 @@ class Wafer(object):
                 continue
             config.add_section(annotation_type.name)
             config.set(
-                annotation_type.name, "number", str(len(annotations)),
+                annotation_type.name,
+                "number",
+                str(len(annotations)),
             )
             for id_, annotation in sorted(annotations.iteritems()):
                 header = annotation.header
@@ -440,7 +446,9 @@ class Wafer(object):
                         )
                         config.set(header, "area", str(annotation.area))
                         config.set(
-                            header, "angle", str(((annotation.angle - 90) % 360) - 180),
+                            header,
+                            "angle",
+                            str(((annotation.angle - 90) % 360) - 180),
                         )
                 elif annotation_type in [
                     AnnotationType.MAGNET,
@@ -579,19 +587,21 @@ class Wafer(object):
         """
         _, _, display_size, _ = self.get_display_parameters()
         self.local_display_size = display_size
-        for id_, section in self.sections.iteritems():
+        for section_id, section in self.sections.iteritems():
             # for id in self.sections:
             # image transform
             aff = AffineTransform2D()
             aff.translate([-v for v in section.centroid])
             aff.rotate(section.angle * Math.PI / 180.0)
-            self.transforms[id_] = aff
+            self.transforms[section_id] = aff
             # poly transform (there is an offset)
             aff_copy = aff.copy()
             poly_translation = AffineTransform2D()
             poly_translation.translate([0.5 * v for v in self.local_display_size])
-            self.poly_transforms[id_] = aff_copy.preConcatenate(poly_translation)
-            self.poly_transforms_inverse[id_] = self.poly_transforms[id_].inverse()
+            self.poly_transforms[section_id] = aff_copy.preConcatenate(poly_translation)
+            self.poly_transforms_inverse[section_id] = self.poly_transforms[
+                section_id
+            ].inverse()
 
     def create_local_stack(self):
         """Creates the local stack with imglib2 framework"""
@@ -636,23 +646,27 @@ class Wafer(object):
             # appends to serial order only if new section
             self.serialorder.append(len(self))
         if self.mode is Mode.GLOBAL:
-            annotation = Annotation(annotation_type, poly, annotation_id,)
+            annotation = Annotation(
+                annotation_type,
+                poly,
+                annotation_id,
+            )
             getattr(self, annotation_type.name)[annotation_id] = annotation
         else:
             # transform to global coordinates when adding from local mode
             if annotation_type is AnnotationType.ROI:
-                transform_id = roi_id_to_section_id(annotation_id)
+                section_id = roi_id_to_section_id(annotation_id)
             else:
-                transform_id = annotation_id
+                section_id = annotation_id
             annotation = Annotation(
                 annotation_type,
                 self.GC.transform_points_to_poly(
                     self.GC.poly_to_points(poly),
-                    self.poly_transforms_inverse[transform_id],
+                    self.poly_transforms_inverse[section_id],
                 ),
                 annotation_id,
             )
-            getattr(self, annotation_type.name)[annotation_id] = annotation
+            getattr(self, annotation_type.name)[section_id] = annotation
         return annotation
 
     def add_section(self, poly, annotation_id):
@@ -920,7 +934,7 @@ class Wafer(object):
                         continue
                     # first back-transform the points to local, then apply the new transform
                     local_points = self.GC.transform_points(
-                        roi.points, self.poly_transforms_inverse[section_id]
+                        roi.points, self.poly_transforms[section_id]
                     )
                     self.add(
                         AnnotationType.ROI,
@@ -930,7 +944,7 @@ class Wafer(object):
 
     def renumber_sections(self):
         """Renumbering the sections to have consecutive numbers without gaps:
-            "0,1,4,5,7 -> 0,1,2,3,4"
+        "0,1,4,5,7 -> 0,1,2,3,4"
         """
         current_serial_order = copy.deepcopy(self.serialorder)
         if self.mode is Mode.LOCAL:
@@ -1028,7 +1042,10 @@ class Annotation(object):
         if len(self) < 2:
             return None
         return self.poly.getFloatAngle(  # TODO: use class method?
-            self.points[0][0], self.points[0][1], self.points[1][0], self.points[1][1],
+            self.points[0][0],
+            self.points[0][1],
+            self.points[1][0],
+            self.points[1][1],
         )
 
 
@@ -1151,7 +1168,12 @@ class GeometryCalculator(object):
         rigidModel = RigidModel2D()
         pointMatches = HashSet()
         for x_i, y_i, x_o, y_o in zip(x_in, y_in, x_out, y_out):
-            pointMatches.add(PointMatch(Point([x_i, y_i]), Point([x_o, y_o]),))
+            pointMatches.add(
+                PointMatch(
+                    Point([x_i, y_i]),
+                    Point([x_o, y_o]),
+                )
+            )
         rigidModel.fit(pointMatches)
         return rigidModel
 
@@ -1384,7 +1406,10 @@ class TSPSolver(object):
 # ----- Listeners and handlers ----- #
 def add_key_listener_everywhere(my_listener):
     for elem in (
-        [IJ.getImage().getWindow(), IJ.getImage().getWindow().getCanvas(),]
+        [
+            IJ.getImage().getWindow(),
+            IJ.getImage().getWindow().getCanvas(),
+        ]
         # ui.getDefaultUI().getConsolePane().getComponent(),]
         # IJ.getInstance]
         + list(WindowManager.getAllNonImageWindows())
@@ -1419,7 +1444,10 @@ def add_key_listener_everywhere(my_listener):
 
 def add_mouse_wheel_listener_everywhere(my_listener):
     for elem in (
-        [IJ.getImage().getWindow(), IJ.getImage().getWindow().getCanvas(),]
+        [
+            IJ.getImage().getWindow(),
+            IJ.getImage().getWindow().getCanvas(),
+        ]
         # ui.getDefaultUI().getConsolePane().getComponent(),]
         # IJ.getInstance]
         + list(WindowManager.getAllNonImageWindows())
@@ -1633,7 +1661,7 @@ def handle_key_m_local():
     stack = wafer.image.getStack()
     n_slices = wafer.image.getNSlices()
 
-    n_rows = int(n_slices ** 0.5)
+    n_rows = int(n_slices**0.5)
     n_cols = n_slices // n_rows
     if n_rows * n_cols < n_slices:
         n_rows += 1
@@ -1732,7 +1760,8 @@ def handle_key_p_local():
         "{}-{}".format(min_section_id, max_section_id),
     )
     gd.addButton(
-        "All sections {}-{}".format(min_section_id, max_section_id), ButtonClick(),
+        "All sections {}-{}".format(min_section_id, max_section_id),
+        ButtonClick(),
     )
     gd.addButton(
         "First half of the sections {}-{}".format(
@@ -1779,7 +1808,8 @@ def handle_key_a():
     drawn_roi = wafer.image.getRoi()
     if not drawn_roi:
         IJ.showMessage(
-            "Info", MSG_DRAWN_ROI_MISSING,
+            "Info",
+            MSG_DRAWN_ROI_MISSING,
         )
         return
     if drawn_roi.getState() is PolygonRoi.CONSTRUCTING and drawn_roi.size() > 3:
@@ -1941,7 +1971,11 @@ def get_indexes_from_user_string(userString):
 def show_dialog(title, subtitle, suggestions, id_default):
     gd = GenericDialog(title)
     gd.addRadioButtonGroup(
-        subtitle, suggestions, len(suggestions), 1, suggestions[id_default],
+        subtitle,
+        suggestions,
+        len(suggestions),
+        1,
+        suggestions[id_default],
     )
     focus_on_ok(gd)
     gd.showDialog()
@@ -2121,10 +2155,12 @@ def toggle_labels():
 
 
 def type_id(
-    name, delimiter_0="-", delimiter_1=".",
+    name,
+    delimiter_0="-",
+    delimiter_1=".",
 ):
     """Returns type and ID of an annotation name
-    
+
     type_id(section-0012) -> AnnotationType.SECTION, 12
     type_id(roi-0019.01) -> AnnotationType.ROI, 1901
     type_id(roi-002.01) -> AnnotationType.ROI, 201
@@ -2195,7 +2231,11 @@ if __name__ == "__main__":
         + '<p style="text-align:center"><a href="https://youtu.be/ZQLTBbM6dMA">20-minute video tutorial</a></p>'
         + tag("Navigation", "h3")
         + print_list(
-            "Zoom in/out" + print_list("[Ctrl] + mouse wheel", "[+] / [-]",),
+            "Zoom in/out"
+            + print_list(
+                "[Ctrl] + mouse wheel",
+                "[+] / [-]",
+            ),
             "Move up/down" + print_list("mouse wheel", "[&uarr] / [&darr]"),
             "Move left/right"
             + print_list("[Shift] + Mouse wheel", "[&larr] / [&rarr]"),

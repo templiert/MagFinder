@@ -859,7 +859,7 @@ class MagReorderer(object):
 
         sorted_keys = sorted(self.wafer.sections)
         k1 = sorted_keys[self.wafer.serialorder[0]]
-        roi_transform = AffineTransform2D()  # sends the roi to the center 0,0
+        roi_transform = AffineTransform2D()  # sends the global roi to the center 0,0
         roi_transform.translate(
             [-v for v in self.wafer.rois[ids_to_id([k1, 0])].centroid]
         )
