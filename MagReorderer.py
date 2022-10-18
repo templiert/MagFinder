@@ -870,7 +870,7 @@ class MagReorderer(object):
                 local_roi,
                 roi_transform.inverse(),
             ),
-            k1,
+            ids_to_id([k1, 0]),
         )
         self.wafer.add_section(
             self.GC.transform_points_to_poly(
