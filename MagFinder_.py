@@ -327,8 +327,9 @@ class Wafer(object):
             for landmark in self.landmarks.values():
                 self.manager.addRoi(landmark.poly)
                 landmark.poly.setHandleSize(landmark.type_.handle_size_global)
-            # for section_id in sorted(self.sections.keys()):
-            for section_id, section in sorted(self.sections.iteritems()):
+            for section_id in sorted(self.sections.keys()):
+                # for section_id, section in sorted(self.sections.iteritems()):
+                section = self.sections[section_id]
                 self.manager.addRoi(section.poly)
                 section.poly.setHandleSize(section.type_.handle_size_global)
                 for annotation_type in [
@@ -908,8 +909,8 @@ class Wafer(object):
     def update_section(self, section_id, transform, local_view):
         """
         Updates the location of a section by applying transform.
-        Typically used by the MagReorderer after transforms have been
-        found to stack the sections in serial order
+        Typically used by the MagReorderer after transforms have been found
+        in order to stack the sections in serial order
         """
         # IJ.log("updating section {} with transform {}".format(section_id, transform))
         with self.set_mode(Mode.GLOBAL):
