@@ -925,7 +925,7 @@ class Wafer(object):
                     self.add(
                         annotation_type,
                         self.GC.transform_points_to_poly(
-                            getattr(self, annotation_type.name).points,
+                            getattr(self, annotation_type.name)[section_id].points,
                             transform,
                         ),
                         section_id,
@@ -942,7 +942,7 @@ class Wafer(object):
                     # )
                     self.add(
                         AnnotationType.ROI,
-                        self.GC.transform_points_to_poly(roi, transform),
+                        self.GC.transform_points_to_poly(roi.points, transform),
                         roi_id,
                     )
 

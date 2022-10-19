@@ -61,11 +61,11 @@ def scale_model2D(model2d, factor, highres_w):
     translation.set(1, 0, 0, 1, highres_w / 2.0, highres_w / 2.0)
 
     output = AffineModel2D()
-    output.preConcatenate(scale)
-    output.preConcatenate(translation)
+    # output.preConcatenate(scale)
+    # output.preConcatenate(translation)
     output.preConcatenate(model2d)
-    output.preConcatenate(translation.createInverse())
-    output.preConcatenate(scale.createInverse())
+    # output.preConcatenate(translation.createInverse())
+    # output.preConcatenate(scale.createInverse())
     return output
 
 
@@ -83,11 +83,11 @@ def get_OK(text):
     return gd.wasOKed()
 
 
-def start_threads(function, fractionCores=1, arguments=None, nThreads=None):
+def start_threads(function, fraction_cores=1, arguments=None, nThreads=None):
     threads = []
     if nThreads == None:
         threadRange = range(
-            max(int(Runtime.getRuntime().availableProcessors() * fractionCores), 1)
+            max(int(Runtime.getRuntime().availableProcessors() * fraction_cores), 1)
         )
     else:
         threadRange = range(nThreads)
@@ -112,6 +112,13 @@ def serialize(x, path):
     object_output_stream.close()
 
 
+def serialize_parallel(atom, objects, paths):
+    while atom.get() < len(paths):
+        k = atom.getAndIncrement()
+        if k < len(paths):
+            serialize(objects[k], paths[k])
+
+
 def deserialize(path):
     object_input_stream = ObjectInputStream(FileInputStream(path))
     x = object_input_stream.readObject()
@@ -119,11 +126,80 @@ def deserialize(path):
     return x
 
 
-def deserialize_parallel(atom, paths, all_features):
+def deserialize_parallel(atom, paths, objects):
     while atom.get() < len(paths):
         k = atom.getAndIncrement()
         if k < len(paths):
-            all_features[k] = deserialize(paths[k])
+            objects[k] = deserialize(paths[k])
+
+
+def serialize_matching_outputs(
+    costs,
+    affine_transforms,
+    match_points_dict,
+    folder,
+):
+    start = time.clock()
+    list_to_serialize = [
+        [
+            costs[i],
+            {
+                (i, j): affine_transforms[(i, j)]
+                for j in range(len(costs))
+                if (i, j) in affine_transforms
+            },
+            {
+                (i, j): match_points_dict[(i, j)]
+                for j in range(len(costs))
+                if (i, j) in match_points_dict
+            },
+        ]
+        for i in range(len(costs))
+    ]
+    start_threads(
+        serialize_parallel,
+        fraction_cores=0.95,
+        arguments=(
+            AtomicInteger(0),
+            list_to_serialize,
+            [
+                os.path.join(folder, "matches_section_{:04}".format(i))
+                for i in range(len(costs))
+            ],
+        ),
+    )
+
+    IJ.log("Duration serialize matching outputs: " + str(time.clock() - start))
+    print("Duration serialize matching outputs: " + str(time.clock() - start))
+
+
+def deserialize_matching_outputs(folder):
+    start = time.clock()
+    filenames = sorted(os.listdir(folder))
+    deserialized_list = [None] * len(filenames)
+    start_threads(
+        deserialize_parallel,
+        fraction_cores=0.95,
+        arguments=(
+            AtomicInteger(0),
+            [os.path.join(folder, filename) for filename in filenames],
+            deserialized_list,
+        ),
+    )
+    costs = []
+    affine_transforms = {}
+    match_points_dict = {}
+    for (
+        section_costs,
+        section_affine_transforms,
+        section_match_points,
+    ) in deserialized_list:
+        costs.append(section_costs)
+        affine_transforms.update(section_affine_transforms)
+        match_points_dict.update(section_match_points)
+    IJ.log("Duration deserialize matching outputs: " + str(time.clock() - start))
+    print("Duration deserialize matching outputs: " + str(time.clock() - start))
+    return costs, affine_transforms, match_points_dict
 
 
 def mkdir_p(path):
@@ -227,8 +303,8 @@ def get_SIFT_similarity(
     allFeatures,
     pairwise_costs,
     affine_transforms,
-    matchPointsDict,
-    minMatchedFeatures,
+    match_points_dict,
+    min_matched_features,
 ):
     while atomicI.get() < len(pairs):
         k = atomicI.getAndIncrement()
@@ -251,7 +327,7 @@ def get_SIFT_similarity(
                 1000,  # iterations
                 20,  # maxDisplacement
                 0.001,  # ratioOfConservedFeatures wafer_39_beads
-                # minMatchedFeatures,
+                # min_matched_features,
             )
         except NotEnoughDataPointsException as e:
             modelFound = False
@@ -273,7 +349,7 @@ def get_SIFT_similarity(
 
             affine_transforms[(id1, id2)] = model.createInverse()
             affine_transforms[(id2, id1)] = model
-            matchPointsDict[(id1, id2)] = inliers
+            match_points_dict[(id1, id2)] = inliers
 
 
 def create_empty_magc():
@@ -463,11 +539,17 @@ class MagReorderer(object):
         self.fine_features_folder = self.get_features_folder("fine")
         self.n_sections = len(self.wafer)
 
-        self.all_coarse_sift_matches = os.path.join(
-            self.working_folder, "all_coarse_sift_matches"
+        self.all_coarse_sift_matches = mkdir_p(
+            os.path.join(
+                self.working_folder,
+                "all_coarse_sift_matches",
+            )
         )
-        self.neighbor_fine_sift_matches = os.path.join(
-            self.working_folder, "neighbor_fine_sift_matches"
+        self.neighbor_fine_sift_matches = mkdir_p(
+            os.path.join(
+                self.working_folder,
+                "neighbor_fine_sift_matches",
+            )
         )
         self.sift_order_path = os.path.join(self.working_folder, "sift_order.txt")
         # size of the extracted roi in the high res image
@@ -613,6 +695,7 @@ class MagReorderer(object):
         self.get_matches("coarse", self.all_coarse_sift_matches)
 
         # determine neighbors based on different metrics
+        start = time.clock()
         neighbor_pairs = list(  # must be ordered for parallel processing
             set(  # to remove duplicates
                 [
@@ -626,6 +709,8 @@ class MagReorderer(object):
                 ]
             )
         )
+        IJ.log("computing neighbor_pairs took " + str(time.clock() - start))
+        print("computing neighbor_pairs took " + str(time.clock() - start))
         IJ.log(
             "These are the neighbor pairs after coarse matching {}".format(
                 neighbor_pairs
@@ -633,11 +718,14 @@ class MagReorderer(object):
         )
 
         # fine sift matching among the neighbor pairs
+        start = time.clock()
         self.get_matches(
             "fine",
             self.neighbor_fine_sift_matches,
             pairs=neighbor_pairs,
         )
+        IJ.log("get_matches took " + str(time.clock() - start))
+        print("get_matches took " + str(time.clock() - start))
 
         # compute order based on neighbor distances
         self.compute_order(self.neighbor_fine_sift_matches)
@@ -692,7 +780,7 @@ class MagReorderer(object):
         # start_threads(
         # open_crop_parallel,
         # nThreads=1,
-        # # fractionCores=1,
+        # # fraction_cores=1,
         # arguments=(AtomicInteger(0), crop_params,),
         # )
         for crop_param in crop_params:
@@ -712,6 +800,7 @@ class MagReorderer(object):
     def compute_features(self, sift_params, features_folder):
         """Computes in parallel sift features of the extracted ROI images"""
         if len(os.listdir(features_folder)) == self.n_sections:
+            IJ.log("Features already computed.")
             return
         roi_paths = folder_content(self.roi_folder)
         IJ.log(
@@ -721,7 +810,7 @@ class MagReorderer(object):
         )
         start_threads(
             parallel_compute_sift,
-            fractionCores=1,
+            fraction_cores=1,
             arguments=(
                 AtomicInteger(0),
                 roi_paths,
@@ -731,9 +820,9 @@ class MagReorderer(object):
         )
         IJ.log("Computing features done.".center(100, "-"))
 
-    def compute_matches(self, features_folder, matches_path, pairs=None):
+    def compute_matches(self, features_folder, matches_folder, pairs=None):
         """Computes in parallel the sift matches among the given pairs"""
-        if os.path.isfile(matches_path):
+        if len(os.listdir(matches_folder)) == self.n_sections:
             IJ.log(
                 "The matches with these parameters have already been computed. Loading from file ..."
             )
@@ -743,7 +832,7 @@ class MagReorderer(object):
         all_features = [0] * len(features_paths)
         start_threads(
             deserialize_parallel,
-            fractionCores=1,
+            fraction_cores=1,
             arguments=[
                 AtomicInteger(0),
                 features_paths,
@@ -754,8 +843,8 @@ class MagReorderer(object):
 
         costs = self.wafer.tsp_solver.init_mat(self.n_sections, initValue=50000)
         affine_transforms = {}
-        matchPointsDict = {}
-        minMatchedFeatures = 20
+        match_points_dict = {}
+        min_matched_features = 20
 
         if pairs is None:
             IJ.log("Computing all pairwise matches...")
@@ -765,38 +854,47 @@ class MagReorderer(object):
         IJ.log("Computing SIFT matches ...".center(100, "-"))
         start_threads(
             get_SIFT_similarity,
-            fractionCores=0.95,
+            fraction_cores=0.95,
             arguments=[
                 AtomicInteger(0),
                 pairs,
                 all_features,
                 costs,
                 affine_transforms,
-                matchPointsDict,
-                minMatchedFeatures,
+                match_points_dict,
+                min_matched_features,
             ],
         )
-        serialize([costs, affine_transforms, matchPointsDict], matches_path)
+        serialize_matching_outputs(
+            costs,
+            affine_transforms,
+            match_points_dict,
+            matches_folder,
+        )
         IJ.log("SIFT matches computed.".center(100, "-"))
 
-    def get_matches(self, sift_mode, matches_path, pairs=None):
+    def get_matches(self, sift_mode, matches_folder, pairs=None):
         """
         1.computes features
         2.computes matches
         """
         features_folder = self.get_features_folder(sift_mode)
         self.compute_features(self.get_sift_parameters(sift_mode), features_folder)
-        self.compute_matches(features_folder, matches_path, pairs=pairs)
+        self.compute_matches(features_folder, matches_folder, pairs=pairs)
 
     @staticmethod
-    def get_cost_mat(matches_path, metric="inliers"):
+    def get_cost_mat(matches_folder, metric="inliers"):
         """
         Returns a cost matrix using the given metric
         inliers: inverse of the number of remaining inliers after ransac
         displacement: average displacement of the transformed inliers
         """
-        pairwise_costs, affine_transforms, matchPointsDict = deserialize(matches_path)
-        for key_pair, match_points in matchPointsDict.iteritems():
+        (
+            pairwise_costs,
+            affine_transforms,
+            match_points_dict,
+        ) = deserialize_matching_outputs(matches_folder)
+        for key_pair, match_points in match_points_dict.iteritems():
             i, j = key_pair
             if metric == "inliers":
                 pairwise_costs[i][j] = 1000 / float(len(match_points))
@@ -805,9 +903,9 @@ class MagReorderer(object):
             pairwise_costs[j][i] = pairwise_costs[i][j]
         return pairwise_costs
 
-    def get_neighbor_pairs(self, matches_path, metric, neighborhood=10):
+    def get_neighbor_pairs(self, matches_folder, metric, neighborhood=10):
         """Returns the best neighbor pairs given a neighborhood"""
-        pairwise_costs = self.get_cost_mat(matches_path, metric=metric)
+        pairwise_costs = self.get_cost_mat(matches_folder, metric=metric)
         all_neighbor_pairs = []
 
         for i in range(self.n_sections):
@@ -824,7 +922,7 @@ class MagReorderer(object):
         IJ.log("Pairs from metric {}: {}".format(metric, all_neighbor_pairs))
         return [x[1] for x in all_neighbor_pairs]
 
-    def compute_order(self, matches_path, metric="inliers"):
+    def compute_order(self, matches_folder, metric="inliers"):
         """Computes and saves the order given the path of the stored matches"""
         if os.path.isfile(self.sift_order_path):
             IJ.log("Order already computed. Loading from file ...".center(100, "-"))
@@ -832,7 +930,7 @@ class MagReorderer(object):
                 self.wafer.serialorder = [int(x) for x in f.readline().split(",")]
             return
         IJ.log("Computing order ...".center(100, "-"))
-        pairwise_costs = self.get_cost_mat(matches_path, metric=metric)
+        pairwise_costs = self.get_cost_mat(matches_folder, metric=metric)
         order = self.wafer.tsp_solver.compute_tsp_order(pairwise_costs)
         with open(self.sift_order_path, "w") as f:
             f.write(",".join([str(o) for o in order]))
@@ -841,9 +939,11 @@ class MagReorderer(object):
 
     def align_sections(self):
         """Realigns the sections based on the transforms found during reordering"""
-        pairwise_costs, affine_transforms, matchPointsDict = deserialize(
-            self.neighbor_fine_sift_matches
-        )
+        (
+            pairwise_costs,
+            affine_transforms,
+            match_points_dict,
+        ) = deserialize_matching_outputs(self.neighbor_fine_sift_matches)
         lowres_w = self.highres_w / self.downsampling_factor
         # TODO instead of defining this new default local_roi
         # take the actual ROI of the first section (transform_poly.inverse global roi?)
@@ -856,8 +956,8 @@ class MagReorderer(object):
 
         # cumulative_local_transform
         # 1.it is updated as we go from pair to pair
-        # 2.it transforms the local low-res image of the first section (in serial order)
-        # into the local low-res image of the current section
+        # 2.it transforms the local low-res image of a section
+        # into the local low-res image of the first section (in serial order)
         # 3. it is a concatenation of the consecutive local pairwise transforms
         cumulative_local_transform = AffineTransform2D()
 
@@ -951,7 +1051,7 @@ class MagReorderer(object):
 
             section_transform = AffineTransform2D()
             section_transform.preConcatenate(self.wafer.transforms[k2])
-            section_transform.preConcatenate(cumulative_local_transform.inverse())
+            section_transform.preConcatenate(cumulative_local_transform)
             section_transform.preConcatenate(self.wafer.transforms[k2].inverse())
             # section_transform.preConcatenate(roi_transform.inverse())
             self.wafer.update_section(
@@ -970,9 +1070,11 @@ class MagReorderer(object):
             [-user_view_size, -user_view_size],
             [user_view_size, user_view_size],
         ]
-        pairwise_costs, affine_transforms, matchPointsDict = deserialize(
-            self.neighbor_fine_sift_matches
-        )
+        (
+            pairwise_costs,
+            affine_transforms,
+            match_points_dict,
+        ) = deserialize_matching_outputs(self.neighbor_fine_sift_matches)
 
         affine_transforms = {
             key: self.GC.to_imglib2_aff(transform)
@@ -998,9 +1100,11 @@ class MagReorderer(object):
             [user_view_size, user_view_size],
         ]
 
-        pairwise_costs, affine_transforms, matchPointsDict = deserialize(
-            self.neighbor_fine_sift_matches
-        )
+        (
+            pairwise_costs,
+            affine_transforms,
+            match_points_dict,
+        ) = deserialize_matching_outputs(self.neighbor_fine_sift_matches)
 
         affine_transforms = {key: AffineTransform2D() for key in affine_transforms}
 
