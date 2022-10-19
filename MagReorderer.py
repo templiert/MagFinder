@@ -440,6 +440,7 @@ def roi_id_to_section_id(roi_id):
 
 class MagReorderer(object):
     def __init__(self, wafer):
+        IJ.log("Starting MagReorderer ...")
         self.wafer = wafer
         self.wafer.manager_to_wafer()  # to compute transforms
         self.GC = self.wafer.GC  # GeometryCalculator
@@ -853,15 +854,32 @@ class MagReorderer(object):
             [-lowres_w / 2, lowres_w / 2],
         ]
 
-        # concatenation of the pairwise transforms needed
-        # to go from one local section to the next
+        # cumulative_local_transform
+        # 1.it is updated as we go from pair to pair
+        # 2.it transforms the local low-res image of the first section (in serial order)
+        # into the local low-res image of the current section
+        # 3. it is a concatenation of the consecutive local pairwise transforms
         cumulative_local_transform = AffineTransform2D()
 
         sorted_keys = sorted(self.wafer.sections)
         k1 = sorted_keys[self.wafer.serialorder[0]]
+        poly_transform = self.wafer.poly_transforms[k1]
+        local_section_reference = self.GC.transform_points(
+            self.wafer.sections[k1].points,
+            poly_transform,
+        )
+        local_roi_reference = self.GC.transform_points(
+            self.wafer.rois[ids_to_id([k1, 0])].points,
+            poly_transform,
+        )
+
+        """
         roi_transform = AffineTransform2D()  # sends the global roi to the center 0,0
         roi_transform.translate(
-            [-v for v in self.wafer.rois[ids_to_id([k1, 0])].centroid]
+            [
+                -self.wafer.rois[ids_to_id([k1, 0])].centroid[0],
+                -self.wafer.rois[ids_to_id([k1, 0])].centroid[1],
+            ]
         )
 
         # add the first section and its roi
@@ -874,16 +892,18 @@ class MagReorderer(object):
         )
         self.wafer.add_section(
             self.GC.transform_points_to_poly(
-                local_roi,
+                local_section,
                 roi_transform.inverse(),
             ),
             k1,
         )
+        """
 
         # build the stack, pair by pair
         for o1, o2 in pairwise(self.wafer.serialorder):
-            # use sorted keys if section_1, section_3 are present
+            # using sorted keys is necessary: if section_1, section_3 are present
             # and not section_2.
+            k1 = sorted_keys[o1]
             k2 = sorted_keys[o2]
 
             roi_transform = AffineTransform2D()  # sends the roi to the center 0,0
@@ -891,20 +911,25 @@ class MagReorderer(object):
                 [-v for v in self.wafer.rois[ids_to_id([k2, 0])].centroid]
             )
 
-            # sift_transform: sends one roi to the next
+            # compute pair_local_transform:
+            # it transforms the local view image of one section
+            # to the next serial section (at low resolution)
+            # (the high resolution transforms were computed,
+            # therefore we apply a scaling to have a transform usable
+            # with low-res images)
             if (o2, o1) not in affine_transforms:
-                # not good, these two sections are supposed to be consecutive
-                # as determined by the section order, but no match (hence no transform)
+                # bad case: these two sections are supposed to be consecutive
+                # as determined by the section order, but no match
                 # has been found between these two.
-                # Use identity transform.
+                # Use identity transform instead.
                 IJ.log(
                     "Warning: transform missing in the pair of sections {}".format(
                         (o2, o1)
                     )
                 )
-                scaled_sift_transform = AffineTransform2D()
+                pair_local_transform = AffineTransform2D()
             else:
-                scaled_sift_transform = self.GC.to_imglib2_aff(
+                pair_local_transform = self.GC.to_imglib2_aff(
                     scale_model2D(
                         affine_transforms[(o2, o1)],
                         self.downsampling_factor,
@@ -912,7 +937,7 @@ class MagReorderer(object):
                     )
                 )
                 transform_scaling = self.GC.get_imglib2_transform_scaling(
-                    scaled_sift_transform
+                    pair_local_transform
                 )
                 if not (0.9 < transform_scaling < 1.1):
                     IJ.log(
@@ -920,17 +945,19 @@ class MagReorderer(object):
                             (o1, o2)
                         )
                     )
-                    scaled_sift_transform = AffineTransform2D()
+                    pair_local_transform = AffineTransform2D()
             # concatenate cumulative_local_transform
-            cumulative_local_transform.preConcatenate(scaled_sift_transform)
+            cumulative_local_transform.preConcatenate(pair_local_transform)
 
             section_transform = AffineTransform2D()
-            section_transform.preConcatenate(cumulative_local_transform)
-            section_transform.preConcatenate(roi_transform.inverse())
+            section_transform.preConcatenate(self.wafer.transforms[k2])
+            section_transform.preConcatenate(cumulative_local_transform.inverse())
+            section_transform.preConcatenate(self.wafer.transforms[k2].inverse())
+            # section_transform.preConcatenate(roi_transform.inverse())
             self.wafer.update_section(
                 k2,
                 section_transform,
-                local_roi,
+                # local_roi,
             )
         self.wafer.clear_transforms()
         self.wafer.compute_transforms()

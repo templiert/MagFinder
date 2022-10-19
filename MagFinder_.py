@@ -906,7 +906,7 @@ class Wafer(object):
             )
         self.stageorder = self.tsp_solver.compute_tsp_order(distances)
 
-    def update_section(self, section_id, transform, local_view):
+    def update_section(self, section_id, transform):
         """
         Updates the location of a section by applying transform.
         Typically used by the MagReorderer after transforms have been found
@@ -924,7 +924,10 @@ class Wafer(object):
                 if section_id in getattr(self, annotation_type.name):
                     self.add(
                         annotation_type,
-                        self.GC.transform_points_to_poly(local_view, transform),
+                        self.GC.transform_points_to_poly(
+                            getattr(self, annotation_type.name).points,
+                            transform,
+                        ),
                         section_id,
                     )
             if self.rois:
@@ -934,12 +937,12 @@ class Wafer(object):
                     if roi is None:
                         continue
                     # first back-transform the points to local, then apply the new transform
-                    local_points = self.GC.transform_points(
-                        roi.points, self.poly_transforms[section_id]
-                    )
+                    # local_points = self.GC.transform_points(
+                    #    roi.points, self.poly_transforms[section_id]
+                    # )
                     self.add(
                         AnnotationType.ROI,
-                        self.GC.transform_points_to_poly(local_points, transform),
+                        self.GC.transform_points_to_poly(roi, transform),
                         roi_id,
                     )
 
