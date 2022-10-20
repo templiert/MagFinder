@@ -18,12 +18,8 @@ from fiji.util.gui import GenericDialogPlus
 from ij import IJ, ImagePlus, ImageStack, WindowManager
 from ij.gui import GenericDialog, PolygonRoi, Roi
 from java.awt.event import KeyAdapter, KeyEvent
-from java.io import (
-    FileInputStream,
-    FileOutputStream,
-    ObjectInputStream,
-    ObjectOutputStream,
-)
+from java.io import (FileInputStream, FileOutputStream, ObjectInputStream,
+                     ObjectOutputStream)
 from java.lang import Exception as java_exception
 from java.lang import Math, Runtime
 from java.util import ArrayList, HashSet
@@ -33,14 +29,13 @@ from loci.formats import ImageReader, MetadataTools
 from mpicbg.ij import SIFT, FeatureTransform
 from mpicbg.ij.plugin import NormalizeLocalContrast
 from mpicbg.imagefeatures import FloatArray2DSIFT
-from mpicbg.models import AffineModel2D, NotEnoughDataPointsException, PointMatch
+from mpicbg.models import (AffineModel2D, NotEnoughDataPointsException,
+                           PointMatch)
 from net.imglib2.converter import RealUnsignedByteConverter
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
 from net.imglib2.img.display.imagej import ImageJVirtualStackUnsignedByte
 from net.imglib2.interpolation.randomaccess import (
-    NearestNeighborInterpolatorFactory,
-    NLinearInterpolatorFactory,
-)
+    NearestNeighborInterpolatorFactory, NLinearInterpolatorFactory)
 from net.imglib2.realtransform import AffineTransform2D
 from net.imglib2.realtransform import RealViews as RV
 from net.imglib2.view import Views
@@ -299,7 +294,6 @@ def get_SIFT_similarity(
     allFeatures,
     pairwise_costs,
     affine_transforms,
-    min_matched_features,
 ):
     while atomicI.get() < len(pairs):
         k = atomicI.getAndIncrement()
@@ -324,7 +318,7 @@ def get_SIFT_similarity(
                 1000,  # iterations
                 20,  # maxDisplacement
                 0.001,  # ratioOfConservedFeatures wafer_39_beads
-                # min_matched_features,
+                # min_matched_features, TODO deprecated or useful to revive?
             )
         except NotEnoughDataPointsException as e:
             modelFound = False
@@ -845,7 +839,6 @@ class MagReorderer(object):
 
         costs = self.wafer.tsp_solver.init_mat(self.n_sections, initValue=50000)
         affine_transforms = {}
-        min_matched_features = 20
 
         if pairs is None:
             IJ.log("Computing all pairwise matches...")
@@ -862,7 +855,6 @@ class MagReorderer(object):
                 all_features,
                 costs,
                 affine_transforms,
-                min_matched_features,
             ],
         )
         serialize_matching_outputs(
