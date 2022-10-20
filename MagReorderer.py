@@ -18,8 +18,12 @@ from fiji.util.gui import GenericDialogPlus
 from ij import IJ, ImagePlus, ImageStack, WindowManager
 from ij.gui import GenericDialog, PolygonRoi, Roi
 from java.awt.event import KeyAdapter, KeyEvent
-from java.io import (FileInputStream, FileOutputStream, ObjectInputStream,
-                     ObjectOutputStream)
+from java.io import (
+    FileInputStream,
+    FileOutputStream,
+    ObjectInputStream,
+    ObjectOutputStream,
+)
 from java.lang import Exception as java_exception
 from java.lang import Math, Runtime
 from java.util import ArrayList, HashSet
@@ -29,13 +33,14 @@ from loci.formats import ImageReader, MetadataTools
 from mpicbg.ij import SIFT, FeatureTransform
 from mpicbg.ij.plugin import NormalizeLocalContrast
 from mpicbg.imagefeatures import FloatArray2DSIFT
-from mpicbg.models import (AffineModel2D, NotEnoughDataPointsException,
-                           PointMatch)
+from mpicbg.models import AffineModel2D, NotEnoughDataPointsException, PointMatch
 from net.imglib2.converter import RealUnsignedByteConverter
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
 from net.imglib2.img.display.imagej import ImageJVirtualStackUnsignedByte
 from net.imglib2.interpolation.randomaccess import (
-    NearestNeighborInterpolatorFactory, NLinearInterpolatorFactory)
+    NearestNeighborInterpolatorFactory,
+    NLinearInterpolatorFactory,
+)
 from net.imglib2.realtransform import AffineTransform2D
 from net.imglib2.realtransform import RealViews as RV
 from net.imglib2.view import Views
@@ -50,6 +55,10 @@ N_SUBROIS = 10
 class Metric(object):
     INLIER_NUMBER = "inlier"
     INLIER_DISPLACEMENT = "displacement"
+
+    @classmethod
+    def all(cls):
+        return cls.INLIER_NUMBER, cls.INLIER_DISPLACEMENT
 
 
 def scale_model2D(model2d, factor, highres_w):
@@ -139,16 +148,17 @@ def serialize_matching_outputs(
     folder,
 ):
     start = time.clock()
+    n_sections = len(costs.values()[0])
     list_to_serialize = [
         [
-            costs[i],
+            [costs[metric][i] for metric in Metric.all()],
             {
                 (i, j): affine_transforms[(i, j)]
-                for j in range(len(costs))
+                for j in range(n_sections)
                 if (i, j) in affine_transforms
             },
         ]
-        for i in range(len(costs))
+        for i in range(n_sections)
     ]
     start_threads(
         serialize_parallel,
@@ -158,7 +168,7 @@ def serialize_matching_outputs(
             list_to_serialize,
             [
                 os.path.join(folder, "matches_section_{:04}".format(i))
-                for i in range(len(costs))
+                for i in range(n_sections)
             ],
         ),
     )
@@ -180,13 +190,14 @@ def deserialize_matching_outputs(folder):
             deserialized_list,
         ),
     )
-    costs = []
+    costs = {metric: [] for metric in Metric.all()}
     affine_transforms = {}
     for (
         section_costs,
         section_affine_transforms,
     ) in deserialized_list:
-        costs.append(section_costs)
+        for metric, cost in zip(Metric.all(), section_costs):
+            costs[metric].append(cost)
         affine_transforms.update(section_affine_transforms)
     IJ.log("Duration deserialize matching outputs: " + str(time.clock() - start))
     print("Duration deserialize matching outputs: " + str(time.clock() - start))
@@ -693,10 +704,7 @@ class MagReorderer(object):
             set(  # to remove duplicates
                 [
                     pair
-                    for metric in [
-                        Metric.INLIER_NUMBER,
-                        Metric.INLIER_DISPLACEMENT,
-                    ]
+                    for metric in Metric.all()
                     for pair in self.get_neighbor_pairs(
                         self.all_coarse_sift_matches,
                         metric,
@@ -837,7 +845,10 @@ class MagReorderer(object):
         )
         IJ.log("All features loaded")
 
-        costs = self.wafer.tsp_solver.init_mat(self.n_sections, initValue=50000)
+        costs = {
+            metric: self.wafer.tsp_solver.init_mat(self.n_sections, initValue=50000)
+            for metric in Metric.all()
+        }
         affine_transforms = {}
 
         if pairs is None:
@@ -882,7 +893,7 @@ class MagReorderer(object):
         """
         (
             pairwise_costs,
-            affine_transforms,
+            _,
         ) = deserialize_matching_outputs(matches_folder)
         return pairwise_costs[metric]
 
@@ -1053,7 +1064,7 @@ class MagReorderer(object):
             [user_view_size, user_view_size],
         ]
         (
-            pairwise_costs,
+            _,
             affine_transforms,
         ) = deserialize_matching_outputs(self.neighbor_fine_sift_matches)
 
@@ -1082,7 +1093,7 @@ class MagReorderer(object):
         ]
 
         (
-            pairwise_costs,
+            _,
             affine_transforms,
         ) = deserialize_matching_outputs(self.neighbor_fine_sift_matches)
 
