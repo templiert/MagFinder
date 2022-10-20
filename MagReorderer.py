@@ -52,6 +52,11 @@ ACCEPTED_IMAGE_FORMATS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
 N_SUBROIS = 10
 
 
+class Metric(object):
+    INLIER_NUMBER = "inlier"
+    INLIER_DISPLACEMENT = "displacement"
+
+
 def scale_model2D(model2d, factor, highres_w):
     """Rescales a model2d transform"""
     scale = AffineModel2D()
@@ -136,7 +141,6 @@ def deserialize_parallel(atom, paths, objects):
 def serialize_matching_outputs(
     costs,
     affine_transforms,
-    match_points_dict,
     folder,
 ):
     start = time.clock()
@@ -147,11 +151,6 @@ def serialize_matching_outputs(
                 (i, j): affine_transforms[(i, j)]
                 for j in range(len(costs))
                 if (i, j) in affine_transforms
-            },
-            {
-                (i, j): match_points_dict[(i, j)]
-                for j in range(len(costs))
-                if (i, j) in match_points_dict
             },
         ]
         for i in range(len(costs))
@@ -188,18 +187,15 @@ def deserialize_matching_outputs(folder):
     )
     costs = []
     affine_transforms = {}
-    match_points_dict = {}
     for (
         section_costs,
         section_affine_transforms,
-        section_match_points,
     ) in deserialized_list:
         costs.append(section_costs)
         affine_transforms.update(section_affine_transforms)
-        match_points_dict.update(section_match_points)
     IJ.log("Duration deserialize matching outputs: " + str(time.clock() - start))
     print("Duration deserialize matching outputs: " + str(time.clock() - start))
-    return costs, affine_transforms, match_points_dict
+    return costs, affine_transforms
 
 
 def mkdir_p(path):
@@ -303,7 +299,6 @@ def get_SIFT_similarity(
     allFeatures,
     pairwise_costs,
     affine_transforms,
-    match_points_dict,
     min_matched_features,
 ):
     while atomicI.get() < len(pairs):
@@ -315,11 +310,13 @@ def get_SIFT_similarity(
             IJ.log("Processing pair {} ".format((id1, id2)))
         candidates = ArrayList()
         FeatureTransform.matchFeatures(
-            allFeatures[id1], allFeatures[id2], candidates, 0.92
+            allFeatures[id1],
+            allFeatures[id2],
+            candidates,
+            0.92,
         )
         inliers = ArrayList()
-        # model = RigidModel2D()
-        model = AffineModel2D()
+        model = AffineModel2D()  # or RigidModel2D()
         try:
             modelFound = model.filterRansac(
                 candidates,  # candidates
@@ -333,23 +330,25 @@ def get_SIFT_similarity(
             modelFound = False
         if modelFound:
             # mean displacement of the remaining matching features
-            distance = PointMatch.meanDistance(inliers)
+            inlier_displacement = 100 * PointMatch.meanDistance(inliers)
+            inlier_number = 1000 / float(len(inliers))
             IJ.log(
                 (
                     "model found in section pair {} - {} : distance {} - {} inliers"
-                ).format(id1, id2, distance, len(inliers))
+                ).format(id1, id2, inlier_displacement, len(inliers))
             )
-            # # metric of number of inliers
-            # pairwise_costs[id1][id2] = pairwise_costs[id2][id1] = (
-            #     1 / len(inliers) * 100
-            # )
 
             # metric of average displacement of point matches
-            pairwise_costs[id1][id2] = pairwise_costs[id2][id1] = distance * 100
+            pairwise_costs[Metric.INLIER_DISPLACEMENT][id1][id2] = pairwise_costs[
+                Metric.INLIER_DISPLACEMENT
+            ][id2][id1] = inlier_displacement
+            # metric of number of inliers
+            pairwise_costs[Metric.INLIER_NUMBER][id1][id2] = pairwise_costs[
+                Metric.INLIER_NUMBER
+            ][id2][id1] = inlier_number
 
             affine_transforms[(id1, id2)] = model.createInverse()
             affine_transforms[(id2, id1)] = model
-            match_points_dict[(id1, id2)] = inliers
 
 
 def create_empty_magc():
@@ -700,7 +699,10 @@ class MagReorderer(object):
             set(  # to remove duplicates
                 [
                     pair
-                    for metric in ["inliers", "displacement"]
+                    for metric in [
+                        Metric.INLIER_NUMBER,
+                        Metric.INLIER_DISPLACEMENT,
+                    ]
                     for pair in self.get_neighbor_pairs(
                         self.all_coarse_sift_matches,
                         metric,
@@ -843,7 +845,6 @@ class MagReorderer(object):
 
         costs = self.wafer.tsp_solver.init_mat(self.n_sections, initValue=50000)
         affine_transforms = {}
-        match_points_dict = {}
         min_matched_features = 20
 
         if pairs is None:
@@ -861,14 +862,12 @@ class MagReorderer(object):
                 all_features,
                 costs,
                 affine_transforms,
-                match_points_dict,
                 min_matched_features,
             ],
         )
         serialize_matching_outputs(
             costs,
             affine_transforms,
-            match_points_dict,
             matches_folder,
         )
         IJ.log("SIFT matches computed.".center(100, "-"))
@@ -883,7 +882,7 @@ class MagReorderer(object):
         self.compute_matches(features_folder, matches_folder, pairs=pairs)
 
     @staticmethod
-    def get_cost_mat(matches_folder, metric="inliers"):
+    def get_cost_mat(matches_folder, metric=Metric.INLIER_NUMBER):
         """
         Returns a cost matrix using the given metric
         inliers: inverse of the number of remaining inliers after ransac
@@ -892,16 +891,8 @@ class MagReorderer(object):
         (
             pairwise_costs,
             affine_transforms,
-            match_points_dict,
         ) = deserialize_matching_outputs(matches_folder)
-        for key_pair, match_points in match_points_dict.iteritems():
-            i, j = key_pair
-            if metric == "inliers":
-                pairwise_costs[i][j] = 1000 / float(len(match_points))
-            elif metric == "displacement":
-                pairwise_costs[i][j] = 100 * PointMatch.meanDistance(match_points)
-            pairwise_costs[j][i] = pairwise_costs[i][j]
-        return pairwise_costs
+        return pairwise_costs[metric]
 
     def get_neighbor_pairs(self, matches_folder, metric, neighborhood=10):
         """Returns the best neighbor pairs given a neighborhood"""
@@ -922,7 +913,7 @@ class MagReorderer(object):
         IJ.log("Pairs from metric {}: {}".format(metric, all_neighbor_pairs))
         return [x[1] for x in all_neighbor_pairs]
 
-    def compute_order(self, matches_folder, metric="inliers"):
+    def compute_order(self, matches_folder, metric=Metric.INLIER_NUMBER):
         """Computes and saves the order given the path of the stored matches"""
         if os.path.isfile(self.sift_order_path):
             IJ.log("Order already computed. Loading from file ...".center(100, "-"))
@@ -940,9 +931,8 @@ class MagReorderer(object):
     def align_sections(self):
         """Realigns the sections based on the transforms found during reordering"""
         (
-            pairwise_costs,
+            _,
             affine_transforms,
-            match_points_dict,
         ) = deserialize_matching_outputs(self.neighbor_fine_sift_matches)
         lowres_w = self.highres_w / self.downsampling_factor
         # TODO instead of defining this new default local_roi
@@ -1073,7 +1063,6 @@ class MagReorderer(object):
         (
             pairwise_costs,
             affine_transforms,
-            match_points_dict,
         ) = deserialize_matching_outputs(self.neighbor_fine_sift_matches)
 
         affine_transforms = {
@@ -1103,7 +1092,6 @@ class MagReorderer(object):
         (
             pairwise_costs,
             affine_transforms,
-            match_points_dict,
         ) = deserialize_matching_outputs(self.neighbor_fine_sift_matches)
 
         affine_transforms = {key: AffineTransform2D() for key in affine_transforms}
