@@ -70,11 +70,22 @@ def scale_model2D(model2d, factor, highres_w):
     translation.set(1, 0, 0, 1, highres_w / 2.0, highres_w / 2.0)
 
     output = AffineModel2D()
-    # output.preConcatenate(scale)
+    output.preConcatenate(scale)
     # output.preConcatenate(translation)
     output.preConcatenate(model2d)
     # output.preConcatenate(translation.createInverse())
-    # output.preConcatenate(scale.createInverse())
+    output.preConcatenate(scale.createInverse())
+
+    IJ.log("original model2d" + str(model2d))
+    IJ.log("with scaling: " + str(output))
+
+    # output_test = AffineModel2D()
+    # output_test.preConcatenate(scale)
+    # output_test.preConcatenate(translation)
+    # output_test.preConcatenate(model2d)
+    # output_test.preConcatenate(translation.createInverse())
+    # output_test.preConcatenate(scale.createInverse())
+    # IJ.log("with scaling and translation: " + str(output_test))
     return output
 
 
@@ -217,40 +228,41 @@ def mkdir_p(path):
     return path
 
 
-def open_crop(crop_params):
-    cropped = subpixel_crop_open(
-        crop_params.high_res_path,
-        crop_params.crop_x,
-        crop_params.crop_y,
-        crop_params.crop_w,
-        crop_params.crop_h,
-        crop_params.channel,
-    )
-    highres_roi_im = subpixel_crop(
-        cropped,
-        0.5 * (cropped.getWidth() - crop_params.highres_w),
-        0.5 * (cropped.getHeight() - crop_params.highres_w),
-        crop_params.highres_w,
-        crop_params.highres_w,
-    )
-    return highres_roi_im
+# def subpixel_open_crop(crop_params):
+#     IJ.log("open_crop: crop_params={}".format(crop_params))
+#     cropped = open_subpixel_crop(
+#         crop_params.high_res_path,
+#         crop_params.centroid_x,
+#         crop_params.centroid_y,
+#         crop_params.highres_w,
+#         crop_params.highres_w,
+#         crop_params.channel,
+#     )
+#     highres_roi_im = subpixel_crop(
+#         cropped,
+#         0.5 * (cropped.getWidth() - crop_params.highres_w),
+#         0.5 * (cropped.getHeight() - crop_params.highres_w),
+#         crop_params.highres_w,
+#         crop_params.highres_w,
+#     )
+#     return highres_roi_im
 
 
-def open_crop_parallel(
-    atom,
-    crop_info,
-):
-    """There was a problem with the parallelization of this operation"""
-    while atom.get() < len(crop_info):
-        k = atom.getAndIncrement()
-        if k < len(crop_info):
-            IJ.log("Open crop rotate image {}".format(k))
-            p = crop_info[k]
-            IJ.log("crop_info - " + str(p))
-            highres_roi_im = open_crop(p)
-            highres_roi_im = normLocalContrast(highres_roi_im, 50, 50, 3, True, True)
-            IJ.run(highres_roi_im, "8-bit", "")
-            IJ.save(highres_roi_im, p.roi_path)
+# def open_crop_parallel(
+#     atom,
+#     crop_info,
+# ):
+#     """There was a problem with the parallelization of this operation"""
+#     while atom.get() < len(crop_info):
+#         k = atom.getAndIncrement()
+#         if k < len(crop_info):
+#             IJ.log("Open crop rotate image {}".format(k))
+#             p = crop_info[k]
+#             IJ.log("crop_info - " + str(p))
+#             highres_roi_im = subpixel_open_crop(p)
+#             highres_roi_im = normLocalContrast(highres_roi_im, 50, 50, 3, True, True)
+#             IJ.run(highres_roi_im, "8-bit", "")
+#             IJ.save(highres_roi_im, p.roi_path)
 
 
 def create_sift_parameters(
@@ -351,6 +363,14 @@ def get_SIFT_similarity(
             pairwise_costs[Metric.INLIER_NUMBER][id1][id2] = pairwise_costs[
                 Metric.INLIER_NUMBER
             ][id2][id1] = inlier_number
+            points = [[240, 1623], [84, 1432]]
+            for point in points:
+                IJ.log(
+                    "m1: {} {}".format(
+                        model.apply(point),
+                        model.applyInverse(point),
+                    )
+                )
 
             affine_transforms[(id1, id2)] = model.createInverse()
             affine_transforms[(id2, id1)] = model
@@ -374,10 +394,15 @@ def centroid(points):
 
 
 def crop_open(im_path, x, y, w, h, channel):
+    assert isinstance(x, int)
+    assert isinstance(y, int)
+    assert isinstance(w, int)
+    assert isinstance(h, int)
+    IJ.log("crop open: x={} y={} w={} h={} channel={}".format(x, y, w, h, channel))
     options = ImporterOptions()
     options.setColorMode(ImporterOptions.COLOR_MODE_GRAYSCALE)
     options.setCrop(True)
-    options.setCropRegion(0, Region(int(x), int(y), int(w), int(h)))
+    options.setCropRegion(0, Region(x, y, w, h))
     options.setId(im_path)
     if channel is None:
         imps = loci.plugins.BF.openImagePlus(options)
@@ -387,7 +412,10 @@ def crop_open(im_path, x, y, w, h, channel):
     return imps[channel]
 
 
-def subpixel_crop_open(im_path, x, y, w, h, channel):
+def open_subpixel_crop(im_path, x, y, w, h, channel):
+    IJ.log(
+        "subpixel crop open: x={} y={} w={} h={} channel={}".format(x, y, w, h, channel)
+    )
     im = crop_open(im_path, int(x), int(y), w + 1, h + 1, channel)
     IJ.run(
         im,
@@ -412,6 +440,7 @@ def polygonroi_from_points(points):
 
 
 def subpixel_crop(im, x, y, w, h):
+    IJ.log("subpixel crop: x={} y={} w={} h={}".format(x, y, w, h))
     IJ.run(
         im,
         "Translate...",
@@ -752,18 +781,17 @@ class MagReorderer(object):
                 "roi_path",
                 "high_res_path",
                 "highres_w",
-                "crop_x",
-                "crop_y",
-                "crop_w",
-                "crop_h",
+                "centroid_x",
+                "centroid_y",
                 "channel",
             ],
         )
         crop_params = []
         for key in sorted(self.wafer.sections):
+            roi = self.wafer.rois[ids_to_id([key, 0])]
             highres_xy = [
-                centroid * float(self.downsampling_factor)
-                for centroid in self.wafer.rois[ids_to_id([key, 0])].centroid
+                roi.centroid[0] * float(self.downsampling_factor),
+                roi.centroid[1] * float(self.downsampling_factor),
             ]
             crop_params.append(
                 CropParam(
@@ -771,10 +799,8 @@ class MagReorderer(object):
                     roi_path=os.path.join(self.roi_folder, "roi_{:04}.tif".format(key)),
                     high_res_path=self.image_path,
                     highres_w=self.highres_w,
-                    crop_x=highres_xy[0] - self.highres_w,
-                    crop_y=highres_xy[1] - self.highres_w,
-                    crop_w=2 * self.highres_w,
-                    crop_h=2 * self.highres_w,
+                    centroid_x=highres_xy[0],
+                    centroid_y=highres_xy[1],
                     channel=self.user_params["channel"]
                     if self.user_params["multichannel"]
                     else None,
@@ -788,7 +814,15 @@ class MagReorderer(object):
         # arguments=(AtomicInteger(0), crop_params,),
         # )
         for crop_param in crop_params:
-            highres_roi_im = open_crop(crop_param)
+            IJ.log("crop_param: " + str(crop_param))
+            highres_roi_im = open_subpixel_crop(
+                crop_param.high_res_path,
+                crop_param.centroid_x - 0.5 * crop_param.highres_w,
+                crop_param.centroid_y - 0.5 * crop_param.highres_w,
+                crop_param.highres_w,
+                crop_param.highres_w,
+                crop_param.channel,
+            )
             if self.user_params["contrast"]:
                 highres_roi_im = normLocalContrast(
                     highres_roi_im,
@@ -947,6 +981,38 @@ class MagReorderer(object):
             [-lowres_w / 2, lowres_w / 2],
         ]
 
+        scale = AffineTransform2D()
+        scale.scale(self.downsampling_factor)
+        translation_center_high_res_fov = AffineTransform2D()
+        translation_center_high_res_fov.translate(
+            [
+                float(self.highres_w / 2),
+                float(self.highres_w / 2),
+            ]
+        )
+        sorted_keys = sorted(self.wafer.sections)
+        k1 = sorted_keys[self.wafer.serialorder[0]]
+
+        centroid_section = self.wafer.sections[k1].centroid
+        translation_centroid = AffineTransform2D()
+        translation_centroid.translate(
+            [
+                -centroid_section[0],
+                -centroid_section[1],
+            ]
+        )
+        section_transform = AffineTransform2D()
+        section_transform.preConcatenate(translation_centroid)
+        section_transform.preConcatenate(scale)
+        section_transform.preConcatenate(translation_center_high_res_fov)
+        reference_local_high_res_section = self.GC.transform_points(
+            self.wafer.sections[k1].points,
+            section_transform,
+        )
+        reference_local_high_res_roi = self.GC.transform_points(
+            self.wafer.rois[ids_to_id([k1, 0])].points,
+            section_transform,
+        )
         # cumulative_local_transform
         # 1.it is updated as we go from pair to pair
         # 2.it transforms the local low-res image of a section
@@ -954,62 +1020,21 @@ class MagReorderer(object):
         # 3. it is a concatenation of the consecutive local pairwise transforms
         cumulative_local_transform = AffineTransform2D()
 
-        sorted_keys = sorted(self.wafer.sections)
-        k1 = sorted_keys[self.wafer.serialorder[0]]
-        poly_transform = self.wafer.poly_transforms[k1]
-        local_section_reference = self.GC.transform_points(
-            self.wafer.sections[k1].points,
-            poly_transform,
-        )
-        local_roi_reference = self.GC.transform_points(
-            self.wafer.rois[ids_to_id([k1, 0])].points,
-            poly_transform,
-        )
-
-        """
-        roi_transform = AffineTransform2D()  # sends the global roi to the center 0,0
-        roi_transform.translate(
-            [
-                -self.wafer.rois[ids_to_id([k1, 0])].centroid[0],
-                -self.wafer.rois[ids_to_id([k1, 0])].centroid[1],
-            ]
-        )
-
-        # add the first section and its roi
-        self.wafer.add_roi(
-            self.GC.transform_points_to_poly(
-                local_roi,
-                roi_transform.inverse(),
-            ),
-            ids_to_id([k1, 0]),
-        )
-        self.wafer.add_section(
-            self.GC.transform_points_to_poly(
-                local_section,
-                roi_transform.inverse(),
-            ),
-            k1,
-        )
-        """
-
         # build the stack, pair by pair
         for o1, o2 in pairwise(self.wafer.serialorder):
+            IJ.log("o1={}, o2={}".format(o1, o2))
             # using sorted keys is necessary: if section_1, section_3 are present
             # and not section_2.
-            k1 = sorted_keys[o1]
             k2 = sorted_keys[o2]
 
-            roi_transform = AffineTransform2D()  # sends the roi to the center 0,0
-            roi_transform.translate(
-                [-v for v in self.wafer.rois[ids_to_id([k2, 0])].centroid]
-            )
-
             # compute pair_local_transform:
-            # it transforms the local view image of one section
+            # 1. it transforms the local view image of one section
             # to the next serial section (at low resolution)
-            # (the high resolution transforms were computed,
+            # 2. the high resolution transforms were computed,
             # therefore we apply a scaling to have a transform usable
-            # with low-res images)
+            # with low-res images
+            # 3. in a local view image, the centroid of the roi is not at (0,0)
+            # but instead at width/2, height/2
             if (o2, o1) not in affine_transforms:
                 # bad case: these two sections are supposed to be consecutive
                 # as determined by the section order, but no match
@@ -1022,12 +1047,15 @@ class MagReorderer(object):
                 )
                 pair_local_transform = AffineTransform2D()
             else:
+                # pair_local_transform = self.GC.to_imglib2_aff(
+                #    scale_model2D(
+                #        affine_transforms[(o2, o1)],
+                #        self.downsampling_factor,
+                #        self.highres_w,
+                #    )
+                # )
                 pair_local_transform = self.GC.to_imglib2_aff(
-                    scale_model2D(
-                        affine_transforms[(o2, o1)],
-                        self.downsampling_factor,
-                        self.highres_w,
-                    )
+                    affine_transforms[(o2, o1)]
                 )
                 transform_scaling = self.GC.get_imglib2_transform_scaling(
                     pair_local_transform
@@ -1040,17 +1068,76 @@ class MagReorderer(object):
                     )
                     pair_local_transform = AffineTransform2D()
             # concatenate cumulative_local_transform
+            IJ.log("pair_local_transform: {}".format(pair_local_transform))
+            IJ.log(
+                "inverse pair_local_transform: {}".format(
+                    pair_local_transform.inverse()
+                )
+            )
             cumulative_local_transform.preConcatenate(pair_local_transform)
+            IJ.log("cumulative_local_transform: {}".format(cumulative_local_transform))
+            point = [[240, 1623], [84, 1432]]
+            IJ.log(
+                "1: {}".format(
+                    self.GC.transform_points(
+                        point,
+                        self.GC.to_imglib2_aff(affine_transforms[(o2, o1)]),
+                    )
+                )
+            )
+            IJ.log(
+                "2: {}".format(
+                    self.GC.transform_points(
+                        point,
+                        self.GC.to_imglib2_aff(affine_transforms[(o2, o1)]).inverse(),
+                    )
+                )
+            )
 
+            IJ.log(
+                "1: {}".format(
+                    self.GC.transform_inverse_points(
+                        point,
+                        self.GC.to_imglib2_aff(affine_transforms[(o2, o1)]),
+                    )
+                )
+            )
+            IJ.log(
+                "2: {}".format(
+                    self.GC.transform_inverse_points(
+                        point,
+                        self.GC.to_imglib2_aff(affine_transforms[(o2, o1)]).inverse(),
+                    )
+                )
+            )
+            centroid_section = self.wafer.sections[k2].centroid
+            translation_centroid = AffineTransform2D()
+            translation_centroid.translate(
+                [
+                    -centroid_section[0],
+                    -centroid_section[1],
+                ]
+            )
             section_transform = AffineTransform2D()
-            section_transform.preConcatenate(self.wafer.transforms[k2])
+            IJ.log("section_transform_1: {}".format(section_transform))
+            # section_transform.preConcatenate(self.wafer.transforms[k2])
+            # IJ.log("section_transform_2: {}".format(section_transform))
+            # section_transform.preConcatenate(translation_centroid)
+            # section_transform.preConcatenate(scale)
+            # section_transform.preConcatenate(translation_center_high_res_fov)
+            # IJ.log("section_transform_3: {}".format(section_transform))
             section_transform.preConcatenate(cumulative_local_transform)
-            section_transform.preConcatenate(self.wafer.transforms[k2].inverse())
-            # section_transform.preConcatenate(roi_transform.inverse())
+            section_transform.preConcatenate(translation_center_high_res_fov.inverse())
+            section_transform.preConcatenate(scale.inverse())
+            section_transform.preConcatenate(translation_centroid.inverse())
+            IJ.log("section_transform_4: {}".format(section_transform))
+            # section_transform.preConcatenate(self.wafer.transforms[k2].inverse())
+            # IJ.log("section_transform_6: {}".format(section_transform))
             self.wafer.update_section(
                 k2,
                 section_transform,
-                # local_roi,
+                reference_local_high_res_section,
+                reference_local_high_res_roi,
             )
         self.wafer.clear_transforms()
         self.wafer.compute_transforms()

@@ -906,7 +906,7 @@ class Wafer(object):
             )
         self.stageorder = self.tsp_solver.compute_tsp_order(distances)
 
-    def update_section(self, section_id, transform):
+    def update_section(self, section_id, transform, ref_section, ref_roi):
         """
         Updates the location of a section by applying transform.
         Typically used by the MagReorderer after transforms have been found
@@ -925,7 +925,8 @@ class Wafer(object):
                     self.add(
                         annotation_type,
                         self.GC.transform_points_to_poly(
-                            getattr(self, annotation_type.name)[section_id].points,
+                            # getattr(self, annotation_type.name)[section_id].points,
+                            ref_section,
                             transform,
                         ),
                         section_id,
@@ -940,9 +941,8 @@ class Wafer(object):
                     # local_points = self.GC.transform_points(
                     #    roi.points, self.poly_transforms[section_id]
                     # )
-                    self.add(
-                        AnnotationType.ROI,
-                        self.GC.transform_points_to_poly(roi.points, transform),
+                    self.add_roi(
+                        self.GC.transform_points_to_poly(ref_roi, transform),
                         roi_id,
                     )
 
@@ -1118,6 +1118,15 @@ class GeometryCalculator(object):
         for source_point in source_points:
             target_point = jarray.array([0, 0], "d")
             aff.apply(source_point, target_point)
+            target_points.append(target_point)
+        return target_points
+
+    @staticmethod
+    def transform_inverse_points(source_points, aff):
+        target_points = []
+        for source_point in source_points:
+            target_point = jarray.array([0, 0], "d")
+            aff.applyInverse(target_point, source_point)
             target_points.append(target_point)
         return target_points
 
