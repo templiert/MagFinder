@@ -906,45 +906,24 @@ class Wafer(object):
             )
         self.stageorder = self.tsp_solver.compute_tsp_order(distances)
 
-    def update_section(self, section_id, transform, ref_section, ref_roi):
+    def update_section(self, section_id, transform, ref_section_points, ref_roi_points):
         """
-        Updates the location of a section by applying transform.
+        Updates the location of a section by applying a transform to a reference section/roi.
         Typically used by the MagReorderer after transforms have been found
         in order to stack the sections in serial order
         """
-        # IJ.log("updating section {} with transform {}".format(section_id, transform))
         with self.set_mode(Mode.GLOBAL):
-            for annotation_type in [
-                AnnotationType.SECTION,
-                AnnotationType.FOCUS,
-                AnnotationType.MAGNET,
-            ]:
-                if not hasattr(self, annotation_type.name):
-                    continue
-                if section_id in getattr(self, annotation_type.name):
-                    self.add(
-                        annotation_type,
-                        self.GC.transform_points_to_poly(
-                            # getattr(self, annotation_type.name)[section_id].points,
-                            ref_section,
-                            transform,
-                        ),
-                        section_id,
-                    )
-            if self.rois:
-                for subroi_id in range(N_SUBROIS):
-                    roi_id = ids_to_id([section_id, subroi_id])
-                    roi = self.rois.get(roi_id)
-                    if roi is None:
-                        continue
-                    # first back-transform the points to local, then apply the new transform
-                    # local_points = self.GC.transform_points(
-                    #    roi.points, self.poly_transforms[section_id]
-                    # )
-                    self.add_roi(
-                        self.GC.transform_points_to_poly(ref_roi, transform),
-                        roi_id,
-                    )
+            self.add_section(
+                self.GC.transform_points_to_poly(
+                    ref_section_points,
+                    transform,
+                ),
+                section_id,
+            )
+            self.add_roi(
+                self.GC.transform_points_to_poly(ref_roi_points, transform),
+                ids_to_id([section_id, 0]),
+            )
 
     def renumber_sections(self):
         """Renumbering the sections to have consecutive numbers without gaps:

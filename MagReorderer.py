@@ -971,40 +971,28 @@ class MagReorderer(object):
             _,
             affine_transforms,
         ) = deserialize_matching_outputs(self.neighbor_fine_sift_matches)
-        lowres_w = self.highres_w / self.downsampling_factor
-        # TODO instead of defining this new default local_roi
-        # take the actual ROI of the first section (transform_poly.inverse global roi?)
-        local_roi = [
-            [-lowres_w / 2, -lowres_w / 2],
-            [lowres_w / 2, -lowres_w / 2],
-            [lowres_w / 2, lowres_w / 2],
-            [-lowres_w / 2, lowres_w / 2],
-        ]
 
-        scale = AffineTransform2D()
-        scale.scale(self.downsampling_factor)
+        scale_upsampling = AffineTransform2D()
+        scale_upsampling.scale(self.downsampling_factor)
+
         translation_center_high_res_fov = AffineTransform2D()
-        translation_center_high_res_fov.translate(
-            [
-                float(self.highres_w / 2),
-                float(self.highres_w / 2),
-            ]
-        )
+        translation_center_high_res_fov.translate(2 * [float(self.highres_w / 2)])
+
         sorted_keys = sorted(self.wafer.sections)
         k1 = sorted_keys[self.wafer.serialorder[0]]
 
-        centroid_section = self.wafer.sections[k1].centroid
         translation_centroid = AffineTransform2D()
         translation_centroid.translate(
             [
-                -centroid_section[0],
-                -centroid_section[1],
+                -self.wafer.sections[k1].centroid[0],
+                -self.wafer.sections[k1].centroid[1],
             ]
         )
         section_transform = AffineTransform2D()
         section_transform.preConcatenate(translation_centroid)
-        section_transform.preConcatenate(scale)
+        section_transform.preConcatenate(scale_upsampling)
         section_transform.preConcatenate(translation_center_high_res_fov)
+
         reference_local_high_res_section = self.GC.transform_points(
             self.wafer.sections[k1].points,
             section_transform,
@@ -1014,46 +1002,30 @@ class MagReorderer(object):
             section_transform,
         )
         # cumulative_local_transform
-        # 1.it is updated as we go from pair to pair
-        # 2.it transforms the local low-res image of a section
-        # into the local low-res image of the first section (in serial order)
+        # 1. it is updated as we go from pair to pair
+        # 2. it transforms the local low-res image of a section
+        # into the local low-res image of the first reference section (in serial order)
         # 3. it is a concatenation of the consecutive local pairwise transforms
         cumulative_local_transform = AffineTransform2D()
 
         # build the stack, pair by pair
         for o1, o2 in pairwise(self.wafer.serialorder):
-            IJ.log("o1={}, o2={}".format(o1, o2))
-            # using sorted keys is necessary: if section_1, section_3 are present
-            # and not section_2.
             k2 = sorted_keys[o2]
 
             # compute pair_local_transform:
-            # 1. it transforms the local view image of one section
-            # to the next serial section (at low resolution)
-            # 2. the high resolution transforms were computed,
-            # therefore we apply a scaling to have a transform usable
-            # with low-res images
-            # 3. in a local view image, the centroid of the roi is not at (0,0)
-            # but instead at width/2, height/2
+            # it transforms the local view image of one section
+            # to the previous serial section (at high resolution)
             if (o2, o1) not in affine_transforms:
                 # bad case: these two sections are supposed to be consecutive
                 # as determined by the section order, but no match
                 # has been found between these two.
                 # Use identity transform instead.
                 IJ.log(
-                    "Warning: transform missing in the pair of sections {}".format(
-                        (o2, o1)
-                    )
+                    "Warning: transform missing in "
+                    " the pair of sections {}".format((o2, o1))
                 )
                 pair_local_transform = AffineTransform2D()
             else:
-                # pair_local_transform = self.GC.to_imglib2_aff(
-                #    scale_model2D(
-                #        affine_transforms[(o2, o1)],
-                #        self.downsampling_factor,
-                #        self.highres_w,
-                #    )
-                # )
                 pair_local_transform = self.GC.to_imglib2_aff(
                     affine_transforms[(o2, o1)]
                 )
@@ -1068,71 +1040,20 @@ class MagReorderer(object):
                     )
                     pair_local_transform = AffineTransform2D()
             # concatenate cumulative_local_transform
-            IJ.log("pair_local_transform: {}".format(pair_local_transform))
-            IJ.log(
-                "inverse pair_local_transform: {}".format(
-                    pair_local_transform.inverse()
-                )
-            )
             cumulative_local_transform.preConcatenate(pair_local_transform)
-            IJ.log("cumulative_local_transform: {}".format(cumulative_local_transform))
-            point = [[240, 1623], [84, 1432]]
-            IJ.log(
-                "1: {}".format(
-                    self.GC.transform_points(
-                        point,
-                        self.GC.to_imglib2_aff(affine_transforms[(o2, o1)]),
-                    )
-                )
-            )
-            IJ.log(
-                "2: {}".format(
-                    self.GC.transform_points(
-                        point,
-                        self.GC.to_imglib2_aff(affine_transforms[(o2, o1)]).inverse(),
-                    )
-                )
-            )
 
-            IJ.log(
-                "1: {}".format(
-                    self.GC.transform_inverse_points(
-                        point,
-                        self.GC.to_imglib2_aff(affine_transforms[(o2, o1)]),
-                    )
-                )
-            )
-            IJ.log(
-                "2: {}".format(
-                    self.GC.transform_inverse_points(
-                        point,
-                        self.GC.to_imglib2_aff(affine_transforms[(o2, o1)]).inverse(),
-                    )
-                )
-            )
-            centroid_section = self.wafer.sections[k2].centroid
             translation_centroid = AffineTransform2D()
             translation_centroid.translate(
                 [
-                    -centroid_section[0],
-                    -centroid_section[1],
+                    -self.wafer.sections[k2].centroid[0],
+                    -self.wafer.sections[k2].centroid[1],
                 ]
             )
             section_transform = AffineTransform2D()
-            IJ.log("section_transform_1: {}".format(section_transform))
-            # section_transform.preConcatenate(self.wafer.transforms[k2])
-            # IJ.log("section_transform_2: {}".format(section_transform))
-            # section_transform.preConcatenate(translation_centroid)
-            # section_transform.preConcatenate(scale)
-            # section_transform.preConcatenate(translation_center_high_res_fov)
-            # IJ.log("section_transform_3: {}".format(section_transform))
             section_transform.preConcatenate(cumulative_local_transform)
             section_transform.preConcatenate(translation_center_high_res_fov.inverse())
-            section_transform.preConcatenate(scale.inverse())
+            section_transform.preConcatenate(scale_upsampling.inverse())
             section_transform.preConcatenate(translation_centroid.inverse())
-            IJ.log("section_transform_4: {}".format(section_transform))
-            # section_transform.preConcatenate(self.wafer.transforms[k2].inverse())
-            # IJ.log("section_transform_6: {}".format(section_transform))
             self.wafer.update_section(
                 k2,
                 section_transform,
