@@ -362,14 +362,6 @@ def get_SIFT_similarity(
             pairwise_costs[Metric.INLIER_NUMBER][id1][id2] = pairwise_costs[
                 Metric.INLIER_NUMBER
             ][id2][id1] = inlier_number
-            points = [[240, 1623], [84, 1432]]
-            for point in points:
-                IJ.log(
-                    "m1: {} {}".format(
-                        model.apply(point),
-                        model.applyInverse(point),
-                    )
-                )
 
             affine_transforms[(id1, id2)] = model.createInverse()
             affine_transforms[(id2, id1)] = model

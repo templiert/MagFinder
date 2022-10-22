@@ -351,12 +351,12 @@ class Wafer(object):
             sorted_keys = sorted(self.sections)
             # sections are ordered in the local stack
             for id_o, o in enumerate(self.serialorder):
+                section_id = sorted_keys[o]
                 for annotation_type in [
                     AnnotationType.SECTION,
                     AnnotationType.FOCUS,
                     AnnotationType.MAGNET,
                 ]:
-                    section_id = sorted_keys[o]
                     annotation = getattr(self, annotation_type.name).get(section_id)
                     if annotation is not None:
                         local_poly = self.GC.transform_points_to_poly(
@@ -1755,8 +1755,8 @@ def handle_key_p_local():
             "Sections cannot be propagated. Only rois, focus, magnets can be propagated",
         )
         return
-    min_section_id = min(wafer.sections.keys())
-    max_section_id = max(wafer.sections.keys())
+    min_section_id = min(wafer.sections)
+    max_section_id = max(wafer.sections)
 
     gd = GenericDialogPlus("Propagation")
     gd.addMessage(
@@ -1790,7 +1790,7 @@ def handle_key_p_local():
     user_range = gd.getNextString()
     input_indexes = get_indexes_from_user_string(user_range)
     IJ.log("User input indexes from Propagation Dialog: {}".format(input_indexes))
-    valid_input_indexes = [i for i in input_indexes if i in wafer.sections.keys()]
+    valid_input_indexes = [i for i in input_indexes if i in wafer.sections]
     if not valid_input_indexes:
         return
 
@@ -1801,7 +1801,6 @@ def handle_key_p_local():
             annotation_points = getattr(wafer, annotation_type.name)[
                 annotation_id
             ].points
-        # adding is easier in global mode
         for input_index in valid_input_indexes:
             propagated_points = GeometryCalculator.propagate_points(
                 wafer.sections[section_id].points,
