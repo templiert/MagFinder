@@ -60,7 +60,6 @@ ACCEPTED_IMAGE_FORMATS = (
     ".jpg",
     ".jpeg",
 )
-N_SUBROIS = 10
 
 
 class Mode(object):
@@ -288,7 +287,9 @@ class Wafer(object):
             config.readfp(configfile)
         for header in config.sections():
             if "." in header:
-                annotation_type, id_ = type_id(header, delimiter_0=".")
+                annotation_type, section_id, annotation_id = type_id(
+                    header, delimiter_0="."
+                )
                 for key, val in config.items(header):
                     if key in ["polygon", "location"]:
                         vals = [float(x) for x in val.split(",")]
@@ -296,7 +297,9 @@ class Wafer(object):
                         self.add(
                             annotation_type,
                             self.GC.points_to_poly(points),
-                            id_,
+                            (section_id, annotation_id)
+                            if annotation_type is AnnotationType.ROI
+                            else section_id,
                         )
             elif header in ["serialorder", "stageorder"]:
                 if config.get(header, header) != "[]":
@@ -327,9 +330,7 @@ class Wafer(object):
             for landmark in self.landmarks.values():
                 self.manager.addRoi(landmark.poly)
                 landmark.poly.setHandleSize(landmark.type_.handle_size_global)
-            for section_id in sorted(self.sections.keys()):
-                # for section_id, section in sorted(self.sections.iteritems()):
-                section = self.sections[section_id]
+            for section_id, section in sorted(self.sections.iteritems()):
                 self.manager.addRoi(section.poly)
                 section.poly.setHandleSize(section.type_.handle_size_global)
                 for annotation_type in [
@@ -342,11 +343,10 @@ class Wafer(object):
                         annotation.poly.setHandleSize(
                             annotation_type.handle_size_global
                         )
-                for subroi_id in range(N_SUBROIS):
-                    roi = self.rois.get(ids_to_id([section_id, subroi_id]))
-                    if roi is not None:
-                        self.manager.addRoi(roi.poly)
-                        roi.poly.setHandleSize(annotation_type.handle_size_global)
+                if section_id in self.rois:
+                    for _, subroi in sorted(self.rois[section_id].iteritems()):
+                        self.manager.addRoi(subroi.poly)
+                        subroi.poly.setHandleSize(annotation_type.handle_size_global)
         elif self.mode is Mode.LOCAL:
             sorted_keys = sorted(self.sections)
             # sections are ordered in the local stack
@@ -368,18 +368,18 @@ class Wafer(object):
                         local_poly.setPosition(0, id_o + 1, 0)
                         local_poly.setHandleSize(annotation_type.handle_size_local)
                         self.manager.addRoi(local_poly)
-                for subroi_id in range(N_SUBROIS):
-                    roi = self.rois.get(ids_to_id([section_id, subroi_id]))
-                    if roi is not None:
-                        local_poly = self.GC.transform_points_to_poly(
-                            roi.points, self.poly_transforms[section_id]
-                        )
-                        local_poly.setName(str(roi))
-                        local_poly.setStrokeColor(roi.type_.color)
-                        local_poly.setImage(self.image)
-                        local_poly.setPosition(0, id_o + 1, 0)
-                        local_poly.setHandleSize(roi.type_.handle_size_local)
-                        self.manager.addRoi(local_poly)
+                if section_id not in self.rois:
+                    continue
+                for _, subroi in sorted(self.rois[section_id].iteritems()):
+                    local_poly = self.GC.transform_points_to_poly(
+                        subroi.points, self.poly_transforms[section_id]
+                    )
+                    local_poly.setName(str(subroi))
+                    local_poly.setStrokeColor(subroi.type_.color)
+                    local_poly.setImage(self.image)
+                    local_poly.setPosition(0, id_o + 1, 0)
+                    local_poly.setHandleSize(subroi.type_.handle_size_local)
+                    self.manager.addRoi(local_poly)
 
     def clear_annotations(self):
         """Clears all annotations except the landmarks"""
@@ -402,8 +402,14 @@ class Wafer(object):
         serial_order = copy.deepcopy(self.serialorder)
         self.clear_annotations()
         for roi in self.manager.iterator():
-            annotation_type, annotation_id = type_id(roi.getName())
-            self.add(annotation_type, roi, annotation_id)
+            annotation_type, section_id, annotation_id = type_id(roi.getName())
+            self.add(
+                annotation_type,
+                roi,
+                (section_id, annotation_id)
+                if annotation_type is AnnotationType.ROI
+                else section_id,
+            )
         self.clear_transforms()
         self.compute_transforms()
         self.serialorder = serial_order  # needed here because serial order is changed when adding a section
@@ -414,6 +420,8 @@ class Wafer(object):
         self.manager_to_wafer()
         config = ConfigParser.ConfigParser()
         for annotation_type in AnnotationType.all():
+            if annotation_type is AnnotationType.ROI:
+                continue
             annotations = getattr(self, annotation_type.name)
             if not annotations:
                 continue
@@ -423,7 +431,7 @@ class Wafer(object):
                 "number",
                 str(len(annotations)),
             )
-            for id_, annotation in sorted(annotations.iteritems()):
+            for _, annotation in sorted(annotations.iteritems()):
                 header = annotation.header
                 config.add_section(header)
                 if annotation_type in [
@@ -460,7 +468,35 @@ class Wafer(object):
                         "location",
                         self.GC.point_to_flat_string(annotation.centroid),
                     )
+
             config.add_section("end_{}".format(annotation_type.name))
+        if self.rois:
+            config.add_section(AnnotationType.ROI.name)
+            config.set(
+                AnnotationType.ROI.name,
+                "number",
+                sum([len(section_rois) for section_rois in self.rois.values()]),
+            )
+            for _, rois in sorted(self.rois.iteritems()):
+                for _, roi in sorted(rois.iteritems()):
+                    header = roi.header
+                    config.add_section(header)
+                    config.set(
+                        header,
+                        "polygon",
+                        self.GC.points_to_flat_string(roi.points),
+                    )
+                    config.set(
+                        header,
+                        "center",
+                        self.GC.point_to_flat_string(roi.centroid),
+                    )
+                    config.set(header, "area", str(roi.area))
+                    config.set(
+                        header,
+                        "angle",
+                        str(((roi.angle - 90) % 360) - 180),
+                    )
         for order_name in ["serialorder", "stageorder"]:
             config.add_section(order_name)
             order = getattr(self, order_name)
@@ -508,13 +544,13 @@ class Wafer(object):
                                 self.sections[section_id].centroid[0],
                                 self.sections[section_id].centroid[1],
                                 self.sections[section_id].angle,
-                                self.rois[section_id].centroid[0]
+                                self.rois[section_id][0].centroid[0]
                                 if section_id in self.rois.keys()
                                 else "",
-                                self.rois[section_id].centroid[1]
+                                self.rois[section_id][0].centroid[1]
                                 if section_id in self.rois.keys()
                                 else "",
-                                self.rois[section_id].angle
+                                self.rois[section_id][0].angle
                                 if section_id in self.rois.keys()
                                 else "",
                                 self.magnets[section_id].centroid[0]
@@ -640,6 +676,10 @@ class Wafer(object):
 
     def add(self, annotation_type, poly, annotation_id, template=None):
         """Adds an annotation to the wafer and returns it"""
+        if annotation_type is AnnotationType.ROI:
+            section_id = annotation_id[0]
+        else:
+            section_id = annotation_id
         if (
             annotation_type is AnnotationType.SECTION
             and annotation_id not in self.sections
@@ -652,13 +692,8 @@ class Wafer(object):
                 poly,
                 annotation_id,
             )
-            getattr(self, annotation_type.name)[annotation_id] = annotation
         else:
             # transform to global coordinates when adding from local mode
-            if annotation_type is AnnotationType.ROI:
-                section_id = roi_id_to_section_id(annotation_id)
-            else:
-                section_id = annotation_id
             annotation = Annotation(
                 annotation_type,
                 self.GC.transform_points_to_poly(
@@ -667,6 +702,11 @@ class Wafer(object):
                 ),
                 annotation_id,
             )
+        if annotation_type is AnnotationType.ROI:
+            if self.rois.get(section_id) is None:
+                self.rois[section_id] = {}
+            self.rois[section_id][annotation_id[1]] = annotation
+        else:
             getattr(self, annotation_type.name)[section_id] = annotation
         return annotation
 
@@ -694,11 +734,7 @@ class Wafer(object):
             return
         selected_poly = self.manager.getRoi(selected_indexes[0])
         poly_name = selected_poly.getName()
-        annotation_type, annotation_id = type_id(poly_name)
-        if annotation_type is AnnotationType.ROI:
-            section_id = roi_id_to_section_id(annotation_id)
-        else:
-            section_id = annotation_id
+        annotation_type, section_id, annotation_id = type_id(poly_name)
         self.save()
         if annotation_type in {
             AnnotationType.MAGNET,
@@ -708,6 +744,8 @@ class Wafer(object):
             if get_OK("Delete {}?".format(poly_name)):
                 delete_selected_roi()
                 self.image.killRoi()
+                if annotation_type is AnnotationType.ROI:
+                    del self.rois[section_id][annotation_id]
                 del getattr(self, annotation_type.name)[annotation_id]
                 # select the section
                 self.manager.select(
@@ -727,13 +765,10 @@ class Wafer(object):
                 if linked_annotation is not None:
                     message += "{}\n \n".format(str(linked_annotation))
                     linked_annotations.append(linked_annotation)
-            for subroi_id in range(N_SUBROIS):
-                linked_annotation = getattr(self, AnnotationType.ROI.name).get(
-                    ids_to_id([annotation_id, subroi_id])
-                )
-                if linked_annotation is not None:
-                    message += "{}\n \n".format(str(linked_annotation))
-                    linked_annotations.append(linked_annotation)
+            if section_id in self.rois:
+                for _, subroi in sorted(self.rois[section_id].iteritems()):
+                    message += "{}\n \n".format(str(subroi))
+                    linked_annotations.append(subroi)
             message = "".join(
                 [
                     "Delete {}?".format(poly_name),
@@ -757,12 +792,10 @@ class Wafer(object):
                 for linked_annotation in linked_annotations:
                     index = get_roi_index_by_name(str(linked_annotation))
                     delete_roi_by_index(index)
-                    del getattr(self, linked_annotation.type_.name)[
-                        linked_annotation.id_
-                    ]
+                    del getattr(self, linked_annotation.type_.name)[section_id]
                 # delete section in manager
                 section_roi_index = get_roi_index_by_name(
-                    str(self.sections[annotation_id])
+                    str(self.sections[section_id])
                 )
                 delete_roi_by_index(section_roi_index)
                 # rearrange serial order
@@ -922,7 +955,7 @@ class Wafer(object):
             )
             self.add_roi(
                 self.GC.transform_points_to_poly(ref_roi_points, transform),
-                ids_to_id([section_id, 0]),
+                (section_id, 0),
             )
 
     def renumber_sections(self):
@@ -937,26 +970,23 @@ class Wafer(object):
             self.close_mode()
             self.start_global_mode()
         for new_key, key in enumerate(sorted(self.sections)):
-            if new_key != key:
-                # for annotation_type in AnnotationType.all_except_landmark():
-                for annotation_type in [
-                    AnnotationType.SECTION,
-                    AnnotationType.FOCUS,
-                    AnnotationType.MAGNET,
-                ]:
-                    annotation = getattr(self, annotation_type.name).get(key)
-                    if annotation is not None:
-                        self.add(annotation_type, annotation.poly, new_key)
-                        del getattr(self, annotation_type.name)[key]
-                if self.rois:
-                    for subroi_id in range(N_SUBROIS):
-                        roi_id = ids_to_id([key, subroi_id])
-                        new_roi_id = ids_to_id([new_key, subroi_id])
-                        roi = self.rois.get(roi_id)
-                        if roi is None:
-                            continue
-                        self.add_roi(roi.poly, new_roi_id)
-                        del self.rois[roi_id]
+            if new_key == key:
+                continue
+            # for annotation_type in AnnotationType.all_except_landmark():
+            for annotation_type in [
+                AnnotationType.SECTION,
+                AnnotationType.FOCUS,
+                AnnotationType.MAGNET,
+            ]:
+                annotation = getattr(self, annotation_type.name).get(key)
+                if annotation is not None:
+                    self.add(annotation_type, annotation.poly, new_key)
+                    del getattr(self, annotation_type.name)[key]
+            if not self.rois:  # TODO needed?
+                continue
+            for subroi_id, subroi in self.rois[key]:
+                self.add_roi(subroi.poly, (new_key, subroi_id))
+                del self.rois[key][subroi_id]
 
         self.clear_transforms()
         self.compute_transforms()
@@ -967,19 +997,12 @@ class Wafer(object):
     def suggest_roi_ids(self, section_id):
         if not self.rois:
             return ["roi-{:04}.{:02}".format(section_id, 0)]
-        existing_roi_ids = [
-            id_to_ids(roi_id)[1]
-            for roi_id in self.rois
-            if roi_id_to_section_id(roi_id) == section_id
-        ]
-        IJ.log("existing_roi_ids " + str(existing_roi_ids))
-        roi_id_suggestions = [
-            id_ for id_ in suggest_ids(existing_roi_ids) if id_ < N_SUBROIS
-        ]
-        IJ.log("roi_id_suggestions " + str(existing_roi_ids))
+        section_rois = self.rois.get(section_id)
+        if section_rois is None:
+            return ["roi-{:04}.{:02}".format(section_id, 0)]
         return [
             "roi-{:04}.{:02}".format(section_id, roi_id_suggestion)
-            for roi_id_suggestion in roi_id_suggestions
+            for roi_id_suggestion in suggest_ids(section_rois.keys())
         ]
 
 
@@ -997,13 +1020,13 @@ class Annotation(object):
 
     def __str__(self):
         if self.type_ is AnnotationType.ROI:
-            return "{}-{:04}.{:02}".format(self.type_.string, *id_to_ids(self.id_))
+            return "{}-{:04}.{:02}".format(self.type_.string, *self.id_)
         return "{}-{:04}".format(self.type_.string, self.id_)
 
     @property
     def header(self):
         if self.type_ is AnnotationType.ROI:
-            return "{}.{:04}.{:02}".format(self.type_.string, *id_to_ids(self.id_))
+            return "{}.{:04}.{:02}".format(self.type_.string, *self.id_)
         return "{}.{:04}".format(self.type_.string, self.id_)
 
     def __len__(self):
@@ -1624,9 +1647,9 @@ def handle_key_m_global():
     """Saves overview"""
     manager = wafer.manager
     for roi in manager.iterator():
-        annotation_type, annotation_id = type_id(roi.getName())
+        annotation_type, section_id, annotation_id = type_id(roi.getName())
         if annotation_type is AnnotationType.SECTION:
-            roi.setName(str(annotation_id))
+            roi.setName(str(section_id))
             roi.setStrokeWidth(8)
         else:
             roi.setName("")
@@ -1725,17 +1748,13 @@ def handle_key_p_local():
         return
     selected_poly = manager.getRoi(selected_indexes[0])
     poly_name = selected_poly.getName()
-    annotation_type, annotation_id = type_id(poly_name)
+    annotation_type, section_id, annotation_id = type_id(poly_name)
     if annotation_type is AnnotationType.SECTION:
         IJ.showMessage(
             "Info",
             "Sections cannot be propagated. Only rois, focus, magnets can be propagated",
         )
         return
-    if annotation_type is AnnotationType.ROI:
-        section_id = id_to_ids(annotation_id)[0]
-    else:
-        section_id = annotation_id
     min_section_id = min(wafer.sections.keys())
     max_section_id = max(wafer.sections.keys())
 
@@ -1776,19 +1795,23 @@ def handle_key_p_local():
         return
 
     with wafer.set_mode(Mode.GLOBAL):
-        # adding is easier in global mode
         if annotation_type is AnnotationType.ROI:
-            subroi_id = id_to_ids(annotation_id)[1]
+            annotation_points = wafer.rois[section_id][annotation_id].points
+        else:
+            annotation_points = getattr(wafer, annotation_type.name)[
+                annotation_id
+            ].points
+        # adding is easier in global mode
         for input_index in valid_input_indexes:
             propagated_points = GeometryCalculator.propagate_points(
                 wafer.sections[section_id].points,
-                getattr(wafer, annotation_type.name)[annotation_id].points,
+                annotation_points,
                 wafer.sections[input_index].points,
             )
             wafer.add(
                 annotation_type,
                 GeometryCalculator.points_to_poly(propagated_points),
-                ids_to_id([input_index, subroi_id])
+                (input_index, annotation_id)
                 if annotation_type is AnnotationType.ROI
                 else input_index,
                 template=section_id,
@@ -1858,12 +1881,15 @@ def handle_key_a():
             drawn_roi = PointRoi(*points[0])
 
     drawn_roi.setName(annotation_name)
-    annotation_type, annotation_id = type_id(annotation_name)
+    annotation_type, section_id, annotation_id = type_id(annotation_name)
     if wafer.mode is Mode.LOCAL:
         drawn_roi.setHandleSize(annotation_type.handle_size_local)
     else:
         drawn_roi.setHandleSize(annotation_type.handle_size_global)
-    wafer.add(annotation_type, drawn_roi, annotation_id)
+    if annotation_type is AnnotationType.ROI:
+        wafer.add_roi(drawn_roi, (section_id, annotation_id))
+    else:
+        wafer.add(annotation_type, drawn_roi, annotation_id)
     drawn_roi.setStrokeColor(annotation_type.color)
     wafer.image.killRoi()
     wafer.wafer_to_manager()
@@ -2151,7 +2177,7 @@ def type_id(
     delimiter_0="-",
     delimiter_1=".",
 ):
-    """Returns type and ID of an annotation name
+    """Returns annotation_type, section_id, annotation_id given an annotation name
 
     type_id(section-0012) -> AnnotationType.SECTION, 12
     type_id(roi-0019.01) -> AnnotationType.ROI, 1901
@@ -2162,27 +2188,8 @@ def type_id(
     ids = [int(x) for x in delimiter_0.join(parts[1:]).split(delimiter_1)]
     annotation_type = [t for t in AnnotationType.all() if t.string in parts[0]][0]
     if annotation_type is AnnotationType.ROI:
-        return annotation_type, ids_to_id(ids)
-    return annotation_type, ids[0]
-
-
-def ids_to_id(ids):
-    """
-    [34,1] -> 341
-    [34] -> 340 for backcompatibilty with single ROI per section
-    """
-    if len(ids) == 2:
-        return ids[0] * N_SUBROIS + ids[1]
-    return ids[0] * N_SUBROIS
-
-
-def id_to_ids(id_):
-    """341 -> [34, 1]"""
-    return int(id_ / N_SUBROIS), int(id_ % N_SUBROIS)
-
-
-def roi_id_to_section_id(roi_id):
-    return id_to_ids(roi_id)[0]
+        return annotation_type, ids[0], ids[1]
+    return annotation_type, ids[0], ids[0]
 
 
 def suggest_ids(ids):
