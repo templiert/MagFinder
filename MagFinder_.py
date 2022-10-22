@@ -29,6 +29,7 @@ from java.lang.reflect import Array
 from java.net import URL
 from java.nio.file import Files, Paths
 from java.util import HashSet
+from java.util.concurrent.atomic import AtomicInteger
 from java.util.zip import GZIPInputStream
 from mpicbg.models import Point, PointMatch, RigidModel2D
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
@@ -60,6 +61,61 @@ ACCEPTED_IMAGE_FORMATS = (
     ".jpg",
     ".jpeg",
 )
+
+
+def process_header_parallel(atom, headers, wafer):
+    config = ConfigParser.ConfigParser()
+    with open(wafer.magc_path, "rb") as configfile:
+        config.readfp(configfile)
+    while atom.get() < len(headers):
+        k = atom.getAndIncrement()
+        if k < len(headers):
+            header = headers[k]
+            if "." in header:
+                annotation_type, section_id, annotation_id = type_id(
+                    header, delimiter_0="."
+                )
+                for key, val in config.items(header):
+                    if key in ["polygon", "location"]:
+                        vals = [float(x) for x in val.split(",")]
+                        points = [[x, y] for x, y in zip(vals[::2], vals[1::2])]
+                        wafer.add(
+                            annotation_type,
+                            wafer.GC.points_to_poly(points),
+                            (section_id, annotation_id)
+                            if annotation_type is AnnotationType.ROI
+                            else section_id,
+                        )
+            elif header in ["serialorder", "stageorder"]:
+                if config.get(header, header) != "[]":
+                    setattr(
+                        wafer,
+                        header,
+                        [int(x) for x in config.get(header, header).split(",")],
+                    )
+
+
+def start_threads(function, fraction_cores=1, arguments=None, nThreads=None):
+    threads = []
+    if nThreads == None:
+        threadRange = range(
+            max(int(Runtime.getRuntime().availableProcessors() * fraction_cores), 1)
+        )
+    else:
+        threadRange = range(nThreads)
+    IJ.log("Running in parallel with ThreadRange = " + str(threadRange))
+    for p in threadRange:
+        if arguments == None:
+            thread = threading.Thread(target=function)
+        else:
+            # IJ.log('These are the arguments ' + str(arguments) + 'III type ' + str(type(arguments)))
+            thread = threading.Thread(group=None, target=function, args=arguments)
+        threads.append(thread)
+        thread.start()
+        IJ.log("Thread " + str(p) + " started")
+    for idThread, thread in enumerate(threads):
+        thread.join()
+        IJ.log("Thread " + str(idThread) + "joined")
 
 
 class Mode(object):
@@ -280,12 +336,61 @@ class Wafer(object):
             magc_path = magc_paths[0]
         return magc_path
 
+    def process_header_parallel(self, atom, headers):
+        config = ConfigParser.ConfigParser()
+        while atom.get() < len(headers):
+            k = atom.getAndIncrement()
+            if k < len(headers):
+                header = headers[k]
+                if "." in header:
+                    annotation_type, section_id, annotation_id = type_id(
+                        header, delimiter_0="."
+                    )
+                    for key, val in config.items(header):
+                        if key in ["polygon", "location"]:
+                            vals = [float(x) for x in val.split(",")]
+                            points = [[x, y] for x, y in zip(vals[::2], vals[1::2])]
+                            self.add(
+                                annotation_type,
+                                self.GC.points_to_poly(points),
+                                (section_id, annotation_id)
+                                if annotation_type is AnnotationType.ROI
+                                else section_id,
+                            )
+                elif header in ["serialorder", "stageorder"]:
+                    if config.get(header, header) != "[]":
+                        setattr(
+                            self,
+                            header,
+                            [int(x) for x in config.get(header, header).split(",")],
+                        )
+
     def file_to_wafer(self):
         """Populates the wafer instance from the .magc file"""
         start = System.nanoTime()
         config = ConfigParser.ConfigParser()
         with open(self.magc_path, "rb") as configfile:
             config.readfp(configfile)
+        IJ.log(
+            "Duration file_to_wafer 1: {}".format((System.nanoTime() - start) * 1e-9)
+        )
+        headers = list(config.sections())
+        IJ.log(
+            "Duration file_to_wafer 2: {}".format((System.nanoTime() - start) * 1e-9)
+        )
+        # threads = []
+        # threadRange = range(max(int(Runtime.getRuntime().availableProcessors() * 1), 1))
+        # IJ.log("Running in parallel with ThreadRange = " + str(threadRange))
+        # start_threads(
+        #    process_header_parallel,
+        #    fraction_cores=1,
+        #    arguments=(
+        #        AtomicInteger(0),
+        #        headers,
+        #        self,
+        #    ),
+        # )
+
         for header in config.sections():
             if "." in header:
                 annotation_type, section_id, annotation_id = type_id(
@@ -323,7 +428,7 @@ class Wafer(object):
                 len(self.landmarks),
             )
         )
-        IJ.log("Duration file_to_wafer: {}".format(System.nanoTime() - start) * 1e-9)
+        IJ.log("Duration file_to_wafer: {}".format((System.nanoTime() - start) * 1e-9))
 
     def wafer_to_manager(self):
         """Draws all rois from the wafer instance into the manager"""
@@ -528,7 +633,7 @@ class Wafer(object):
 
     def save_csv(self):
         # TODO currently broken with multirois
-        start = Sytem.nanoTime()
+        start = System.nanoTime()
         csv_path = os.path.join(self.root, "annotations.csv")
         with open(csv_path, "w") as f:
             f.write(
@@ -620,7 +725,7 @@ class Wafer(object):
 
     def start_local_mode(self):
         """Starts local display mode"""
-        start = Sytem.nanoTime()
+        start = System.nanoTime()
         IJ.log("Starting local mode ...")
         self.mode = Mode.LOCAL
         self.compute_transforms()
@@ -683,8 +788,8 @@ class Wafer(object):
                 RV.transform(
                     Views.interpolate(
                         Views.extendZero(self.img_global),
-                        NLinearInterpolatorFactory()
-                        # Views.extendZero(self.img_global), NearestNeighborInterpolatorFactory() # if scrolling is too slow
+                        # NLinearInterpolatorFactory()
+                        NearestNeighborInterpolatorFactory(),
                     ),
                     self.transforms[sorted_section_keys[o]],
                 ),
@@ -1058,7 +1163,8 @@ class Annotation(object):
         self.id_ = id_
         self.points = GeometryCalculator.poly_to_points(poly)
         self.centroid = self.compute_centroid()
-        self.area = poly.getStatistics().pixelCount
+        # self.area = poly.getStatistics().pixelCount # removed, too slow
+        self.area = self.compute_area()
         self.angle = self.compute_angle()
         self.template = template
         self.set_poly_properties()
@@ -1076,6 +1182,10 @@ class Annotation(object):
 
     def __len__(self):
         return self.poly.size()
+
+    def compute_area(self):
+        bounds = self.poly.getBounds()
+        return bounds.getHeight() * bounds.getWidth()
 
     def set_poly_properties(self):
         self.poly.setName(str(self))
