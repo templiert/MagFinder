@@ -1002,7 +1002,9 @@ class Wafer(object):
             return ["roi-{:04}.{:02}".format(section_id, 0)]
         return [
             "roi-{:04}.{:02}".format(section_id, roi_id_suggestion)
-            for roi_id_suggestion in suggest_ids(section_rois.keys())
+            for roi_id_suggestion in sorted(
+                set(suggest_ids(section_rois.keys())).union(set(section_rois))
+            )
         ]
 
 
