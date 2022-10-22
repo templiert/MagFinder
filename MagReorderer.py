@@ -49,7 +49,6 @@ from net.imglib2.view import Views
 ImporterOptions = importlib.import_module("loci.plugins.in.ImporterOptions")
 
 ACCEPTED_IMAGE_FORMATS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
-N_SUBROIS = 10
 
 
 class Metric(object):
@@ -376,19 +375,6 @@ def get_SIFT_similarity(
             affine_transforms[(id2, id1)] = model
 
 
-def create_empty_magc():
-    magc = {
-        "sections": {},
-        "rois": {},
-        "magnets": {},
-        "focus": {},
-        "landmarksEM": {},
-        "serialorder": [],
-        "tsporder": [],
-    }
-    return magc
-
-
 def centroid(points):
     return polygonroi_from_points(points).getContourCentroid()
 
@@ -528,25 +514,6 @@ def intr(x):
     return int(round(x))
 
 
-def ids_to_id(ids):
-    """
-    [34,1] -> 341
-    [34] -> 340 for backcompatibilty with single ROI per section
-    """
-    if len(ids) == 2:
-        return ids[0] * N_SUBROIS + ids[1]
-    return ids[0] * N_SUBROIS
-
-
-def id_to_ids(id_):
-    """341 -> [34, 1]"""
-    return int(id_ / N_SUBROIS), int(id_ % N_SUBROIS)
-
-
-def roi_id_to_section_id(roi_id):
-    return id_to_ids(roi_id)[0]
-
-
 class MagReorderer(object):
     def __init__(self, wafer):
         IJ.log("Starting MagReorderer ...")
@@ -587,7 +554,7 @@ class MagReorderer(object):
         self.sift_order_path = os.path.join(self.working_folder, "sift_order.txt")
         # size of the extracted roi in the high res image
         self.highres_w = intr(
-            Math.sqrt(next(iter(self.wafer.rois.values())).area)
+            Math.sqrt(next(iter(self.wafer.rois.values()))[0].area)
             * self.downsampling_factor
         )
 
@@ -788,7 +755,7 @@ class MagReorderer(object):
         )
         crop_params = []
         for key in sorted(self.wafer.sections):
-            roi = self.wafer.rois[ids_to_id([key, 0])]
+            roi = self.wafer.rois[key][0]
             highres_xy = [
                 roi.centroid[0] * float(self.downsampling_factor),
                 roi.centroid[1] * float(self.downsampling_factor),
@@ -998,7 +965,7 @@ class MagReorderer(object):
             section_transform,
         )
         reference_local_high_res_roi = self.GC.transform_points(
-            self.wafer.rois[ids_to_id([k1, 0])].points,
+            self.wafer.rois[k1][0].points,
             section_transform,
         )
         # cumulative_local_transform
