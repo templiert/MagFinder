@@ -350,7 +350,7 @@ def get_SIFT_similarity(
             inlier_number = 1000 / float(len(inliers))
             IJ.log(
                 (
-                    "model found in section pair {} - {} : distance {} - {} inliers"
+                    "model found in section pair {} - {} : distance {:.1f} - {} inliers"
                 ).format(id1, id2, inlier_displacement, len(inliers))
             )
 
@@ -376,7 +376,6 @@ def crop_open(im_path, x, y, w, h, channel):
     assert isinstance(y, int)
     assert isinstance(w, int)
     assert isinstance(h, int)
-    IJ.log("crop open: x={} y={} w={} h={} channel={}".format(x, y, w, h, channel))
     options = ImporterOptions()
     options.setColorMode(ImporterOptions.COLOR_MODE_GRAYSCALE)
     options.setCrop(True)
@@ -391,9 +390,6 @@ def crop_open(im_path, x, y, w, h, channel):
 
 
 def open_subpixel_crop(im_path, x, y, w, h, channel):
-    IJ.log(
-        "subpixel crop open: x={} y={} w={} h={} channel={}".format(x, y, w, h, channel)
-    )
     im = crop_open(im_path, int(x), int(y), w + 1, h + 1, channel)
     IJ.run(
         im,
@@ -418,7 +414,6 @@ def polygonroi_from_points(points):
 
 
 def subpixel_crop(im, x, y, w, h):
-    IJ.log("subpixel crop: x={} y={} w={} h={}".format(x, y, w, h))
     IJ.run(
         im,
         "Translate...",
