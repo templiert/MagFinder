@@ -17,6 +17,7 @@ import net.imagej.ImageJ
 from fiji.util.gui import GenericDialogPlus
 from ij import IJ, ImagePlus, ImageStack, WindowManager
 from ij.gui import GenericDialog, PolygonRoi, Roi
+from java.awt import Polygon
 from java.awt.event import KeyAdapter, KeyEvent
 from java.io import (
     FileInputStream,
@@ -310,41 +311,108 @@ def parallel_compute_sift(atom, paths, saveFolder, sift_params, roi=None):
         del features
 
 
-def get_SIFT_similarity(
-    atomicI,
+def get_SIFT_similarity_parallel(
+    atom,
     pairs,
-    allFeatures,
+    section_features,
     pairwise_costs,
     affine_transforms,
+    translation_threshold,
 ):
-    while atomicI.get() < len(pairs):
-        k = atomicI.getAndIncrement()
+    while atom.get() < len(pairs):
+        k = atom.getAndIncrement()
         if k >= len(pairs):
             continue
         id1, id2 = pairs[k]
         if k % 100 == 0:
             IJ.log("Processing pair {} ".format((id1, id2)))
-        candidates = ArrayList()
-        FeatureTransform.matchFeatures(
-            allFeatures[id1],
-            allFeatures[id2],
-            candidates,
-            0.92,
+        get_SIFT_similarity(
+            id1,
+            id2,
+            section_features[id1],
+            section_features[id2],
+            pairwise_costs,
+            affine_transforms,
+            translation_threshold,
         )
-        inliers = ArrayList()
-        model = AffineModel2D()  # or RigidModel2D()
-        try:
-            modelFound = model.filterRansac(
-                candidates,  # candidates
-                inliers,  # inliers
-                1000,  # iterations
-                20,  # maxDisplacement
-                0.001,  # ratioOfConservedFeatures wafer_39_beads
-                # min_matched_features, TODO deprecated or useful to revive?
+
+
+def get_SIFT_similarity(
+    id1,
+    id2,
+    features_1,
+    features_2,
+    pairwise_costs,
+    affine_transforms,
+    translation_threshold,
+):
+    candidates = ArrayList()
+    FeatureTransform.matchFeatures(
+        features_1,
+        features_2,
+        candidates,
+        0.92,
+    )
+    inliers = ArrayList()
+    model = AffineModel2D()  # or RigidModel2D()
+    try:
+        modelFound = model.filterRansac(
+            candidates,  # candidates
+            inliers,  # inliers
+            1000,  # iterations
+            20,  # maxDisplacement
+            0.001,  # ratioOfConservedFeatures wafer_39_beads
+            # min_matched_features, TODO deprecated or useful to revive?
+        )
+    except NotEnoughDataPointsException as e:
+        modelFound = False
+    if modelFound:
+        affine_transforms[(id2, id1)] = model
+        affine_transform = model.createAffine()
+        IJ.log("affine transform {}".format(affine_transform))
+        IJ.log(
+            "translation norm {}".format(
+                (
+                    Math.sqrt(
+                        affine_transform.getTranslateX() ** 2
+                        + affine_transform.getTranslateY() ** 2
+                    )
+                )
             )
-        except NotEnoughDataPointsException as e:
-            modelFound = False
-        if modelFound:
+        )
+        if over_translation(affine_transform, translation_threshold):
+            # IJ.log("type of inliers {}".format(type(inliers)))
+            # IJ.log("type of inlier {}".format(type(inliers[0])))
+            # IJ.log("inlier[0] {}".format(inliers[0]))
+            # IJ.log("number of inliers {}".format(len(inliers)))
+            IJ.log("WARNING: over translation {}".format((id1, id2)))
+            # make a java.awt.polygon with the bad feature locations
+            polygon_bad_feature_locations = Polygon()
+            for point_match in inliers:
+                polygon_bad_feature_locations.addPoint(
+                    *[int(a) for a in point_match.getP2().getL()]
+                )
+            # get convex hull by first transforming into a PolygonRoi
+            convex_hull_bad_features = PolygonRoi(
+                polygon_bad_feature_locations,
+                PolygonRoi.POLYGON,
+            ).getFloatConvexHull()
+
+            filtered_features_2 = HashSet()
+            for feature in features_2:
+                if not convex_hull_bad_features.contains(*feature.location):
+                    filtered_features_2.add(feature)
+            get_SIFT_similarity(
+                id1,
+                id2,
+                features_1,
+                filtered_features_2,
+                pairwise_costs,
+                affine_transforms,
+                translation_threshold,
+            )
+        else:
+            affine_transforms[(id1, id2)] = model.createInverse()
             # mean displacement of the remaining matching features
             inlier_displacement = 100 * PointMatch.meanDistance(inliers)
             inlier_number = 1000 / float(len(inliers))
@@ -363,8 +431,22 @@ def get_SIFT_similarity(
                 Metric.INLIER_NUMBER
             ][id2][id1] = inlier_number
 
-            affine_transforms[(id1, id2)] = model.createInverse()
-            affine_transforms[(id2, id1)] = model
+
+def over_translation(
+    affine_transform,
+    translation_threshold,
+):
+    """
+    Compares the translation part of the transform to a threshold
+    affine_transform is a AffineModel2D (not AffineTransform2D)
+    """
+    return (
+        Math.sqrt(
+            affine_transform.getTranslateX() ** 2
+            + affine_transform.getTranslateY() ** 2
+        )
+        > translation_threshold
+    )
 
 
 def centroid(points):
@@ -843,10 +925,11 @@ class MagReorderer(object):
             IJ.log("Computing all pairwise matches...")
             pairs = list(itertools.combinations(range(self.n_sections), 2))
 
+        translation_threshold = 0.3 * self.highres_w
         # compute matches in parallel
         IJ.log("Computing SIFT matches ...".center(100, "-"))
         start_threads(
-            get_SIFT_similarity,
+            get_SIFT_similarity_parallel,
             fraction_cores=0.95,
             arguments=[
                 AtomicInteger(0),
@@ -854,6 +937,7 @@ class MagReorderer(object):
                 all_features,
                 costs,
                 affine_transforms,
+                translation_threshold,
             ],
         )
         serialize_matching_outputs(

@@ -374,23 +374,6 @@ class Wafer(object):
         IJ.log(
             "Duration file_to_wafer 1: {}".format((System.nanoTime() - start) * 1e-9)
         )
-        headers = list(config.sections())
-        IJ.log(
-            "Duration file_to_wafer 2: {}".format((System.nanoTime() - start) * 1e-9)
-        )
-        # threads = []
-        # threadRange = range(max(int(Runtime.getRuntime().availableProcessors() * 1), 1))
-        # IJ.log("Running in parallel with ThreadRange = " + str(threadRange))
-        # start_threads(
-        #    process_header_parallel,
-        #    fraction_cores=1,
-        #    arguments=(
-        #        AtomicInteger(0),
-        #        headers,
-        #        self,
-        #    ),
-        # )
-
         for header in config.sections():
             if "." in header:
                 annotation_type, section_id, annotation_id = type_id(
