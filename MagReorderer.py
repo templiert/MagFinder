@@ -355,7 +355,6 @@ def get_SIFT_similarity_parallel(
             translation_threshold,
             highres_w,
             translation_center,
-            # highres_corners,
             0,  # attempt
         )
 
@@ -411,15 +410,13 @@ def get_SIFT_similarity(
     translation_threshold,
     highres_w,
     translation_center,
-    # highres_corners,
     attempt,
 ):
     # root = r"C:\tests\magreorderer\version_2_same_section\ordering_working_folder\roi_images"
-    root = r"C:\tests\magreorderer\version_1_different_section\ordering_working_folder\roi_images"
+    # root = r"C:\tests\magreorderer\version_1_different_section\ordering_working_folder\roi_images"
     pair = id1, id2
     highres_center = [0.5 * highres_w] * 2
-    print("translation threshold {}".format(translation_threshold))
-    print("processing pair {}".format(pair))
+    dlog("processing pair {}".format(pair))
     candidates = ArrayList()
     FeatureTransform.matchFeatures(features_1, features_2, candidates, 0.92)
     inliers = ArrayList()
@@ -435,7 +432,7 @@ def get_SIFT_similarity(
         )
     except NotEnoughDataPointsException as e:
         model_found = False
-        print("no model found {}".format(pair))
+        dlog("no model found {}".format(pair))
     if model_found:
         affine_transforms[(id2, id1)] = model
         affine_transforms[pair] = model.createInverse()
@@ -444,7 +441,7 @@ def get_SIFT_similarity(
         center_rebased_transform = change_basis(
             model.createAffine(), translation_center
         )
-        print(
+        dlog(
             (
                 "model found in section pair {} : distance {:.1f} - {} inliers"
                 "/n center_rebased_transform {} {}"
@@ -456,16 +453,15 @@ def get_SIFT_similarity(
                 translation_norm(center_rebased_transform),
             )
         )
-        p1, p2 = inliers_to_polygons(inliers, model)
+        # p1, p2 = inliers_to_polygons(inliers, model)
         if over_translation(center_rebased_transform, translation_threshold):
-            print("WARNING: over translation {}".format(pair))
-            for p, id in zip((p1, p2), pair):
-                # print("xpoint of p {} {} {}".format(pair, id, p.xpoints))
-                # print("ypoint of p {} {} {}".format(pair, id, p.ypoints))
-                im = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id)))
-                im.show()
-                im.setRoi(PointRoi(p), True)
-                im.setTitle("{}_{}".format(pair, id))
+            print("WARNING: over translation {}".format(pair).center(100, "-"))
+            # for p, id in zip((p1, p2), pair):
+            #    im = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id)))
+            #    im.show()
+            #    im.setRoi(PointRoi(p), True)
+            #    im.setTitle("{}_{}".format(pair, id))
+
             # corner_1 = highres_corners[id1]
             # corner_2 = highres_corners[id2]
             # for inlier in inliers:
@@ -476,7 +472,7 @@ def get_SIFT_similarity(
             #        a + b for a, b in zip(corner_2, inlier.getP2().getL())
             #    ]
             filtering_radius = 0.5 * (1 - 0.1 * (attempt + 1)) * highres_w
-            print("filtering_radius {}".format(filtering_radius))
+            dlog("filtering_radius {}".format(filtering_radius))
             filtered_features_1 = HashSet()
             for feature in features_1:
                 if get_distance(feature.location, highres_center) < filtering_radius:
@@ -486,10 +482,9 @@ def get_SIFT_similarity(
                 if get_distance(feature.location, highres_center) < filtering_radius:
                     filtered_features_2.add(feature)
             if len(filtered_features_2) < 5:
-                IJ.log("Less than 5 features after filtering pair {}".format(pair))
-                print("Less than 5 features after filtering pair {}".format(pair))
+                dlog("Less than 5 features after filtering pair {}".format(pair))
                 return
-            print(
+            dlog(
                 "len features_2 {}, filtered_features_2 {}".format(
                     len(features_2), len(filtered_features_2)
                 )
@@ -501,11 +496,12 @@ def get_SIFT_similarity(
             # for feature in features_2:
             #    if not hull_bad_features.contains(*feature.location):
             #        filtered_features_2.add(feature)
-            new_features_pointroi = PointRoi(features_to_polygon(filtered_features_2))
-            print("A".center(100, "-"))
-            im2 = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id2)))
-            im2.show()
-            im2.setRoi(new_features_pointroi, True)
+
+            # new_features_pointroi = PointRoi(features_to_polygon(filtered_features_2))
+            # dlog("A".center(100, "-"))
+            # im2 = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id2)))
+            # im2.show()
+            # im2.setRoi(new_features_pointroi, True)
             get_SIFT_similarity(
                 id1,
                 id2,
@@ -864,7 +860,7 @@ class MagReorderer(object):
 
         # coarse sift matching
         self.get_matches("coarse", self.all_coarse_sift_matches)
-        return
+        # return
 
         # determine neighbors based on different metrics
         start = time.clock()
@@ -1038,13 +1034,14 @@ class MagReorderer(object):
             pairs = list(itertools.combinations(range(self.n_sections), 2))
 
         translation_threshold = 0.2 * self.highres_w
+        dlog("translation threshold {}".format(translation_threshold))
         # compute matches in parallel
         IJ.log("Computing SIFT matches ...".center(100, "-"))
         # highres_corners = deserialize(self.highres_roi_corners)
         start_threads(
             get_SIFT_similarity_parallel,
-            # fraction_cores=0.95,
-            nThreads=1,
+            fraction_cores=0.95,
+            # nThreads=1,
             arguments=[
                 AtomicInteger(0),
                 pairs,
@@ -1056,7 +1053,7 @@ class MagReorderer(object):
                 # highres_corners,
             ],
         )
-        return
+        # return
         serialize_matching_outputs(
             costs,
             affine_transforms,
