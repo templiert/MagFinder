@@ -5,6 +5,7 @@ import importlib
 import io.scif.img.ImgOpener
 import itertools
 import os
+import sys
 import threading
 import time
 from collections import namedtuple
@@ -16,9 +17,10 @@ import loci.plugins.BF
 import net.imagej.ImageJ
 from fiji.util.gui import GenericDialogPlus
 from ij import IJ, ImagePlus, ImageStack, WindowManager
-from ij.gui import GenericDialog, PolygonRoi, Roi
-from java.awt import Polygon
+from ij.gui import GenericDialog, PointRoi, PolygonRoi, Roi
+from java.awt import Polygon, Rectangle
 from java.awt.event import KeyAdapter, KeyEvent
+from java.awt.geom import AffineTransform
 from java.io import (
     FileInputStream,
     FileOutputStream,
@@ -318,7 +320,10 @@ def get_SIFT_similarity_parallel(
     pairwise_costs,
     affine_transforms,
     translation_threshold,
+    highres_w,
 ):
+    translation_center = AffineTransform()
+    translation_center.translate(0.5 * highres_w, 0.5 * highres_w)
     while atom.get() < len(pairs):
         k = atom.getAndIncrement()
         if k >= len(pairs):
@@ -334,7 +339,37 @@ def get_SIFT_similarity_parallel(
             pairwise_costs,
             affine_transforms,
             translation_threshold,
+            highres_w,
+            translation_center,
         )
+
+
+def change_basis(A, B):
+    """Change A into B basis"""
+    aff = AffineTransform()
+    aff.concatenate(B.createInverse())
+    aff.concatenate(A)
+    aff.concatenate(B)
+    return aff
+
+
+def translation_norm(A):
+    return Math.sqrt(A.getTranslateX() ** 2 + A.getTranslateY() ** 2)
+
+
+def inliers_to_polygons(inliers):
+    p1, p2 = Polygon(), Polygon()
+    for inlier in inliers:
+        p1.addPoint(*[int(a) for a in inlier.getP1().getL()])
+        p2.addPoint(*[int(a) for a in inlier.getP2().getL()])
+    return p1, p2
+
+
+def features_to_polygon(features):
+    p = Polygon()
+    for feature in features:
+        p.addPoint([int(a) for a in feature.location])
+    return p
 
 
 def get_SIFT_similarity(
@@ -345,7 +380,12 @@ def get_SIFT_similarity(
     pairwise_costs,
     affine_transforms,
     translation_threshold,
+    highres_w,
+    translation_center,
 ):
+    root = r"C:\tests\magreorderer\version_2_same_section\ordering_working_folder\roi_images"
+    pair = id1, id2
+    print("processing pair {}".format(pair))
     candidates = ArrayList()
     FeatureTransform.matchFeatures(
         features_1,
@@ -366,35 +406,52 @@ def get_SIFT_similarity(
         )
     except NotEnoughDataPointsException as e:
         modelFound = False
+        print("no model found {}".format(pair))
     if modelFound:
         affine_transforms[(id2, id1)] = model
-        affine_transform = model.createAffine()
-        IJ.log("affine transform {}".format(affine_transform))
-        IJ.log(
-            "translation norm {}".format(
-                (
-                    Math.sqrt(
-                        affine_transform.getTranslateX() ** 2
-                        + affine_transform.getTranslateY() ** 2
-                    )
-                )
+        center_rebased_transform = change_basis(
+            model.createAffine(),
+            translation_center,
+        )
+        print(
+            "center_rebased_transform {} {} {}".format(
+                pair,
+                center_rebased_transform,
+                translation_norm(center_rebased_transform),
             )
         )
-        if over_translation(affine_transform, translation_threshold):
-            # IJ.log("type of inliers {}".format(type(inliers)))
-            # IJ.log("type of inlier {}".format(type(inliers[0])))
-            # IJ.log("inlier[0] {}".format(inliers[0]))
-            # IJ.log("number of inliers {}".format(len(inliers)))
-            IJ.log("WARNING: over translation {}".format((id1, id2)))
-            # make a java.awt.polygon with the bad feature locations
-            polygon_bad_feature_locations = Polygon()
-            for point_match in inliers:
-                polygon_bad_feature_locations.addPoint(
-                    *[int(a) for a in point_match.getP2().getL()]
-                )
+        p1, p2 = inliers_to_polygons(inliers)
+        features_centroid_2 = PolygonRoi(
+            p2,
+            Roi.POLYGON,
+        ).getContourCentroid()
+        features_excentricity = Math.sqrt(
+            (features_centroid_2[0] - highres_w / 2.0) ** 2
+            + (features_centroid_2[1] - highres_w / 2.0) ** 2
+        )
+        print("features excentricity {} ".format(features_excentricity))
+        print("translation threshold {}".format(translation_threshold))
+        # if features_excentricity > translation_threshold:
+        if True or over_translation(center_rebased_transform, translation_threshold):
+            print("WARNING: over translation {}".format(pair))
+            im1 = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id1)))
+            im2 = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id2)))
+            im1.show()
+            im1.setRoi(PointRoi(p1), True)
+            im1.setTitle("{}_{}".format(pair, pair[0]))
+            im2.show()
+            im2.setRoi(PointRoi(p2), True)
+            im2.setTitle("{}_{}".format(pair, pair[1]))
+            return
             # get convex hull by first transforming into a PolygonRoi
+            # print(polygon_feature_locations_2.getBounds2D())
+            # print(polygon_feature_locations_2.getBounds())
+            # bounds_bad_features = expand_rectangle(
+            #    polygon_feature_locations_2.getBounds2D(),
+            #    20,
+            # )
             convex_hull_bad_features = PolygonRoi(
-                polygon_bad_feature_locations,
+                p2,
                 PolygonRoi.POLYGON,
             ).getFloatConvexHull()
 
@@ -402,6 +459,15 @@ def get_SIFT_similarity(
             for feature in features_2:
                 if not convex_hull_bad_features.contains(*feature.location):
                     filtered_features_2.add(feature)
+            new_features_pointroi = PointRoi(features_to_polygon(filtered_features_2))
+            im2_copy = im2.copy()
+            im2_copy.show()
+            im2_copy.setRoi(new_features_pointroi, True)
+            print(
+                "len features_2 {}, filtered_features_2 {}".format(
+                    len(features_2), len(filtered_features_2)
+                )
+            )
             get_SIFT_similarity(
                 id1,
                 id2,
@@ -410,16 +476,17 @@ def get_SIFT_similarity(
                 pairwise_costs,
                 affine_transforms,
                 translation_threshold,
+                highres_w,
             )
         else:
-            affine_transforms[(id1, id2)] = model.createInverse()
+            affine_transforms[pair] = model.createInverse()
             # mean displacement of the remaining matching features
             inlier_displacement = 100 * PointMatch.meanDistance(inliers)
             inlier_number = 1000 / float(len(inliers))
-            IJ.log(
+            print(
                 (
-                    "model found in section pair {} - {} : distance {:.1f} - {} inliers"
-                ).format(id1, id2, inlier_displacement, len(inliers))
+                    "model found in section pair {} : distance {:.1f} - {} inliers"
+                ).format(pair, inlier_displacement, len(inliers))
             )
 
             # metric of average displacement of point matches
@@ -430,6 +497,22 @@ def get_SIFT_similarity(
             pairwise_costs[Metric.INLIER_NUMBER][id1][id2] = pairwise_costs[
                 Metric.INLIER_NUMBER
             ][id2][id1] = inlier_number
+
+
+def expand_rectangle(rectangle, percentage):
+    print("rectangle: {}".format(rectangle))
+    new_width = rectangle.getWidth() * (100 + percentage) / float(100)
+    new_height = rectangle.getHeight() * (100 + percentage) / float(100)
+    new_x = rectangle.getX() - 0.5 * percentage / float(100) * rectangle.getWidth()
+    new_y = rectangle.getY() - 0.5 * percentage / float(100) * rectangle.getHeight()
+    new_rectangle = Rectangle(
+        int(new_x),
+        int(new_y),
+        int(new_width),
+        int(new_height),
+    )
+    print("new rectangle: {}".format(new_rectangle))
+    return new_rectangle
 
 
 def over_translation(
@@ -762,6 +845,7 @@ class MagReorderer(object):
 
         # coarse sift matching
         self.get_matches("coarse", self.all_coarse_sift_matches)
+        return
 
         # determine neighbors based on different metrics
         start = time.clock()
@@ -850,7 +934,6 @@ class MagReorderer(object):
         # arguments=(AtomicInteger(0), crop_params,),
         # )
         for crop_param in crop_params:
-            IJ.log("crop_param: " + str(crop_param))
             highres_roi_im = open_subpixel_crop(
                 crop_param.high_res_path,
                 crop_param.centroid_x - 0.5 * crop_param.highres_w,
@@ -925,7 +1008,7 @@ class MagReorderer(object):
             IJ.log("Computing all pairwise matches...")
             pairs = list(itertools.combinations(range(self.n_sections), 2))
 
-        translation_threshold = 0.3 * self.highres_w
+        translation_threshold = 0.2 * self.highres_w
         # compute matches in parallel
         IJ.log("Computing SIFT matches ...".center(100, "-"))
         start_threads(
@@ -938,8 +1021,10 @@ class MagReorderer(object):
                 costs,
                 affine_transforms,
                 translation_threshold,
+                self.highres_w,
             ],
         )
+        return
         serialize_matching_outputs(
             costs,
             affine_transforms,
