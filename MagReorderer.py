@@ -54,6 +54,11 @@ ImporterOptions = importlib.import_module("loci.plugins.in.ImporterOptions")
 ACCEPTED_IMAGE_FORMATS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
 
 
+def get_distance(p_1, p_2):
+    """Distance between two points"""
+    return Math.sqrt((p_2[0] - p_1[0]) ** 2 + (p_2[1] - p_1[1]) ** 2)
+
+
 class Metric(object):
     INLIER_NUMBER = "inlier"
     INLIER_DISPLACEMENT = "displacement"
@@ -61,6 +66,12 @@ class Metric(object):
     @classmethod
     def all(cls):
         return cls.INLIER_NUMBER, cls.INLIER_DISPLACEMENT
+
+
+def dlog(x):
+    """Double log to print and IJ.log"""
+    IJ.log(x)
+    print(x)
 
 
 def scale_model2D(model2d, factor, highres_w):
@@ -78,8 +89,8 @@ def scale_model2D(model2d, factor, highres_w):
     # output.preConcatenate(translation.createInverse())
     output.preConcatenate(scale.createInverse())
 
-    IJ.log("original model2d" + str(model2d))
-    IJ.log("with scaling: " + str(output))
+    dlog("original model2d" + str(model2d))
+    dlog("with scaling: " + str(output))
 
     # output_test = AffineModel2D()
     # output_test.preConcatenate(scale)
@@ -302,6 +313,8 @@ def parallel_compute_sift(atom, paths, saveFolder, sift_params, roi=None):
         float_SIFT = FloatArray2DSIFT(sift_params)
         ij_SIFT = SIFT(float_SIFT)
         im = IJ.openImage(paths[k])
+        # important: cannot use k, must use section_id
+        # section_id = int(os.path.basename(paths[k]).split("_")[-1])
         if roi is not None:
             im = crop(im, roi)
         ip = im.getProcessor()
@@ -321,6 +334,7 @@ def get_SIFT_similarity_parallel(
     affine_transforms,
     translation_threshold,
     highres_w,
+    # highres_corners,
 ):
     translation_center = AffineTransform()
     translation_center.translate(0.5 * highres_w, 0.5 * highres_w)
@@ -341,6 +355,8 @@ def get_SIFT_similarity_parallel(
             translation_threshold,
             highres_w,
             translation_center,
+            # highres_corners,
+            0,  # attempt
         )
 
 
@@ -357,19 +373,22 @@ def translation_norm(A):
     return Math.sqrt(A.getTranslateX() ** 2 + A.getTranslateY() ** 2)
 
 
-def inliers_to_polygons(inliers):
+def inliers_to_polygons(inliers, model):
     p1, p2 = Polygon(), Polygon()
     for inlier in inliers:
-        # p1.addPoint(*[int(a) for a in inlier.getP1().getL()])
-        p1.addPoint(*[int(a) for a in inlier.getP1().getW()])
+        # p1.addPoint(*[int(a) for a in model.applyInverse(inlier.getP1().getL())])
+        # p1.addPoint(*[int(a) for a in model.applyInverse(inlier.getP1().getW())])
+        # print("inlier {}".format(inlier.getP1().getL()))
+        p1.addPoint(*[int(a) for a in inlier.getP1().getL()])
         p2.addPoint(*[int(a) for a in inlier.getP2().getL()])
     return p1, p2
 
 
 def features_to_polygon(features):
+    print("B".center(100, "-"))
     p = Polygon()
     for feature in features:
-        p.addPoint([int(a) for a in feature.location])
+        p.addPoint(*[int(a) for a in feature.location])
     return p
 
     # features_centroid_2 = PolygonRoi(
@@ -392,9 +411,13 @@ def get_SIFT_similarity(
     translation_threshold,
     highres_w,
     translation_center,
+    # highres_corners,
+    attempt,
 ):
-    root = r"C:\tests\magreorderer\version_2_same_section\ordering_working_folder\roi_images"
+    # root = r"C:\tests\magreorderer\version_2_same_section\ordering_working_folder\roi_images"
+    root = r"C:\tests\magreorderer\version_1_different_section\ordering_working_folder\roi_images"
     pair = id1, id2
+    highres_center = [0.5 * highres_w] * 2
     print("translation threshold {}".format(translation_threshold))
     print("processing pair {}".format(pair))
     candidates = ArrayList()
@@ -402,7 +425,7 @@ def get_SIFT_similarity(
     inliers = ArrayList()
     model = AffineModel2D()  # or RigidModel2D()
     try:
-        modelFound = model.filterRansac(
+        model_found = model.filterRansac(
             candidates,  # candidates
             inliers,  # inliers
             1000,  # iterations
@@ -411,9 +434,9 @@ def get_SIFT_similarity(
             # min_matched_features, TODO deprecated or useful to revive?
         )
     except NotEnoughDataPointsException as e:
-        modelFound = False
+        model_found = False
         print("no model found {}".format(pair))
-    if modelFound:
+    if model_found:
         affine_transforms[(id2, id1)] = model
         affine_transforms[pair] = model.createInverse()
         inlier_displacement = 100 * PointMatch.meanDistance(inliers)
@@ -433,40 +456,67 @@ def get_SIFT_similarity(
                 translation_norm(center_rebased_transform),
             )
         )
-        p1, p2 = inliers_to_polygons(inliers)
-        if True or over_translation(center_rebased_transform, translation_threshold):
+        p1, p2 = inliers_to_polygons(inliers, model)
+        if over_translation(center_rebased_transform, translation_threshold):
             print("WARNING: over translation {}".format(pair))
             for p, id in zip((p1, p2), pair):
+                # print("xpoint of p {} {} {}".format(pair, id, p.xpoints))
+                # print("ypoint of p {} {} {}".format(pair, id, p.ypoints))
                 im = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id)))
                 im.show()
                 im.setRoi(PointRoi(p), True)
                 im.setTitle("{}_{}".format(pair, id))
-            return
-            # bounds_bad_features = expand_rectangle(p2.getBounds2D(), 20)
-            hull_bad_features = PolygonRoi(p2, PolygonRoi.POLYGON).getFloatConvexHull()
-
+            # corner_1 = highres_corners[id1]
+            # corner_2 = highres_corners[id2]
+            # for inlier in inliers:
+            #    world_inlier_1 = [
+            #        a + b for a, b in zip(corner_1, inlier.getP1().getL())
+            #    ]
+            #    world_inlier_2 = [
+            #        a + b for a, b in zip(corner_2, inlier.getP2().getL())
+            #    ]
+            filtering_radius = 0.5 * (1 - 0.1 * (attempt + 1)) * highres_w
+            print("filtering_radius {}".format(filtering_radius))
+            filtered_features_1 = HashSet()
+            for feature in features_1:
+                if get_distance(feature.location, highres_center) < filtering_radius:
+                    filtered_features_1.add(feature)
             filtered_features_2 = HashSet()
             for feature in features_2:
-                if not hull_bad_features.contains(*feature.location):
+                if get_distance(feature.location, highres_center) < filtering_radius:
                     filtered_features_2.add(feature)
-            new_features_pointroi = PointRoi(features_to_polygon(filtered_features_2))
-            im2_copy = im2.copy()
-            im2_copy.show()
-            im2_copy.setRoi(new_features_pointroi, True)
+            if len(filtered_features_2) < 5:
+                IJ.log("Less than 5 features after filtering pair {}".format(pair))
+                print("Less than 5 features after filtering pair {}".format(pair))
+                return
             print(
                 "len features_2 {}, filtered_features_2 {}".format(
                     len(features_2), len(filtered_features_2)
                 )
             )
+            # return
+            # bounds_bad_features = expand_rectangle(p2.getBounds2D(), 20)
+            # hull_bad_features = PolygonRoi(p2, PolygonRoi.POLYGON).getFloatConvexHull()
+
+            # for feature in features_2:
+            #    if not hull_bad_features.contains(*feature.location):
+            #        filtered_features_2.add(feature)
+            new_features_pointroi = PointRoi(features_to_polygon(filtered_features_2))
+            print("A".center(100, "-"))
+            im2 = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id2)))
+            im2.show()
+            im2.setRoi(new_features_pointroi, True)
             get_SIFT_similarity(
                 id1,
                 id2,
-                features_1,
+                filtered_features_1,
                 filtered_features_2,
                 pairwise_costs,
                 affine_transforms,
                 translation_threshold,
                 highres_w,
+                translation_center,
+                attempt + 1,
             )
         else:
             # metric of average displacement of point matches
@@ -647,39 +697,27 @@ def intr(x):
 class MagReorderer(object):
     def __init__(self, wafer):
         IJ.log("Starting MagReorderer ...")
+        self.user_params = self.get_user_params()
+        if self.user_params is None:
+            return
         self.wafer = wafer
         self.wafer.manager_to_wafer()  # to compute transforms
         self.GC = self.wafer.GC  # GeometryCalculator
         self.image_path = self.get_im_path(-1)
         self.downsampling_factor = self.get_downsampling_factor()
-        self.user_params = self.get_user_params()
-        if self.user_params is None:
-            return
-
         self.working_folder = mkdir_p(
             os.path.join(self.wafer.root, "ordering_working_folder")
         )
-        self.roi_folder = mkdir_p(
-            os.path.join(
-                self.working_folder,
-                "roi_images",
-            )
-        )
+        self.roi_folder = mkdir_p(os.path.join(self.working_folder, "roi_images"))
         self.coarse_features_folder = self.get_features_folder("coarse")
         self.fine_features_folder = self.get_features_folder("fine")
         self.n_sections = len(self.wafer)
 
         self.all_coarse_sift_matches = mkdir_p(
-            os.path.join(
-                self.working_folder,
-                "all_coarse_sift_matches",
-            )
+            os.path.join(self.working_folder, "all_coarse_sift_matches")
         )
         self.neighbor_fine_sift_matches = mkdir_p(
-            os.path.join(
-                self.working_folder,
-                "neighbor_fine_sift_matches",
-            )
+            os.path.join(self.working_folder, "neighbor_fine_sift_matches")
         )
         self.sift_order_path = os.path.join(self.working_folder, "sift_order.txt")
         # size of the extracted roi in the high res image
@@ -687,6 +725,9 @@ class MagReorderer(object):
             Math.sqrt(next(iter(self.wafer.rois.values()))[0].area)
             * self.downsampling_factor
         )
+        # self.highres_roi_corners = mkdir_p(
+        #    os.path.join(self.working_folder, "highres_roi_corners")
+        # )
 
     def get_user_params(self):
         p = {}
@@ -875,35 +916,45 @@ class MagReorderer(object):
         CropParam = namedtuple(
             "CropParam",
             [
-                "key",
                 "roi_path",
-                "high_res_path",
+                "highres_path",
                 "highres_w",
-                "centroid_x",
-                "centroid_y",
+                "highres_centroid",
                 "channel",
             ],
         )
         crop_params = []
-        for key in sorted(self.wafer.sections):
+        # highres_corners = []
+        for id_enumerate, key in enumerate(sorted(self.wafer.sections)):
             roi = self.wafer.rois[key][0]
-            highres_xy = [
+            highres_centroid = [
                 roi.centroid[0] * float(self.downsampling_factor),
                 roi.centroid[1] * float(self.downsampling_factor),
             ]
+            # highres_corners.append(
+            #    [
+            #        highres_centroid[0] - 0.5 * self.highres_w,
+            #        highres_centroid[1] - 0.5 * self.highres_w,
+            #    ]
+            # )
             crop_params.append(
                 CropParam(
-                    key=key,
-                    roi_path=os.path.join(self.roi_folder, "roi_{:04}.tif".format(key)),
-                    high_res_path=self.image_path,
+                    roi_path=os.path.join(
+                        self.roi_folder,
+                        "roi_{:04}.tif".format(id_enumerate),
+                        # "roi_x_{:.5f}_y_{:.5f}_{:04}.tif".format(
+                        #    highres_corner[0], highres_corner[1], id_enumerate
+                        # ),
+                    ),
+                    highres_path=self.image_path,
                     highres_w=self.highres_w,
-                    centroid_x=highres_xy[0],
-                    centroid_y=highres_xy[1],
+                    highres_centroid=highres_centroid,
                     channel=self.user_params["channel"]
                     if self.user_params["multichannel"]
                     else None,
                 )
             )
+        # serialize(highres_corners, self.highres_roi_corners)
         # # something failing when using in parallel
         # start_threads(
         # open_crop_parallel,
@@ -913,9 +964,9 @@ class MagReorderer(object):
         # )
         for crop_param in crop_params:
             highres_roi_im = open_subpixel_crop(
-                crop_param.high_res_path,
-                crop_param.centroid_x - 0.5 * crop_param.highres_w,
-                crop_param.centroid_y - 0.5 * crop_param.highres_w,
+                crop_param.highres_path,
+                crop_param.highres_centroid[0] - 0.5 * crop_param.highres_w,
+                crop_param.highres_centroid[1] - 0.5 * crop_param.highres_w,
                 crop_param.highres_w,
                 crop_param.highres_w,
                 crop_param.channel,
@@ -989,9 +1040,11 @@ class MagReorderer(object):
         translation_threshold = 0.2 * self.highres_w
         # compute matches in parallel
         IJ.log("Computing SIFT matches ...".center(100, "-"))
+        # highres_corners = deserialize(self.highres_roi_corners)
         start_threads(
             get_SIFT_similarity_parallel,
-            fraction_cores=0.95,
+            # fraction_cores=0.95,
+            nThreads=1,
             arguments=[
                 AtomicInteger(0),
                 pairs,
@@ -1000,6 +1053,7 @@ class MagReorderer(object):
                 affine_transforms,
                 translation_threshold,
                 self.highres_w,
+                # highres_corners,
             ],
         )
         return
