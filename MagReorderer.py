@@ -360,7 +360,8 @@ def translation_norm(A):
 def inliers_to_polygons(inliers):
     p1, p2 = Polygon(), Polygon()
     for inlier in inliers:
-        p1.addPoint(*[int(a) for a in inlier.getP1().getL()])
+        # p1.addPoint(*[int(a) for a in inlier.getP1().getL()])
+        p1.addPoint(*[int(a) for a in inlier.getP1().getW()])
         p2.addPoint(*[int(a) for a in inlier.getP2().getL()])
     return p1, p2
 
@@ -370,6 +371,15 @@ def features_to_polygon(features):
     for feature in features:
         p.addPoint([int(a) for a in feature.location])
     return p
+
+    # features_centroid_2 = PolygonRoi(
+    #     p2,
+    #     Roi.POLYGON,
+    # ).getContourCentroid()
+    # features_excentricity = Math.sqrt(
+    #     (features_centroid_2[0] - highres_w / 2.0) ** 2
+    #     + (features_centroid_2[1] - highres_w / 2.0) ** 2
+    # )
 
 
 def get_SIFT_similarity(
@@ -385,14 +395,10 @@ def get_SIFT_similarity(
 ):
     root = r"C:\tests\magreorderer\version_2_same_section\ordering_working_folder\roi_images"
     pair = id1, id2
+    print("translation threshold {}".format(translation_threshold))
     print("processing pair {}".format(pair))
     candidates = ArrayList()
-    FeatureTransform.matchFeatures(
-        features_1,
-        features_2,
-        candidates,
-        0.92,
-    )
+    FeatureTransform.matchFeatures(features_1, features_2, candidates, 0.92)
     inliers = ArrayList()
     model = AffineModel2D()  # or RigidModel2D()
     try:
@@ -409,55 +415,39 @@ def get_SIFT_similarity(
         print("no model found {}".format(pair))
     if modelFound:
         affine_transforms[(id2, id1)] = model
+        affine_transforms[pair] = model.createInverse()
+        inlier_displacement = 100 * PointMatch.meanDistance(inliers)
+        inlier_number = 1000 / float(len(inliers))
         center_rebased_transform = change_basis(
-            model.createAffine(),
-            translation_center,
+            model.createAffine(), translation_center
         )
         print(
-            "center_rebased_transform {} {} {}".format(
+            (
+                "model found in section pair {} : distance {:.1f} - {} inliers"
+                "/n center_rebased_transform {} {}"
+            ).format(
                 pair,
+                inlier_displacement,
+                len(inliers),
                 center_rebased_transform,
                 translation_norm(center_rebased_transform),
             )
         )
         p1, p2 = inliers_to_polygons(inliers)
-        features_centroid_2 = PolygonRoi(
-            p2,
-            Roi.POLYGON,
-        ).getContourCentroid()
-        features_excentricity = Math.sqrt(
-            (features_centroid_2[0] - highres_w / 2.0) ** 2
-            + (features_centroid_2[1] - highres_w / 2.0) ** 2
-        )
-        print("features excentricity {} ".format(features_excentricity))
-        print("translation threshold {}".format(translation_threshold))
-        # if features_excentricity > translation_threshold:
         if True or over_translation(center_rebased_transform, translation_threshold):
             print("WARNING: over translation {}".format(pair))
-            im1 = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id1)))
-            im2 = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id2)))
-            im1.show()
-            im1.setRoi(PointRoi(p1), True)
-            im1.setTitle("{}_{}".format(pair, pair[0]))
-            im2.show()
-            im2.setRoi(PointRoi(p2), True)
-            im2.setTitle("{}_{}".format(pair, pair[1]))
+            for p, id in zip((p1, p2), pair):
+                im = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id)))
+                im.show()
+                im.setRoi(PointRoi(p), True)
+                im.setTitle("{}_{}".format(pair, id))
             return
-            # get convex hull by first transforming into a PolygonRoi
-            # print(polygon_feature_locations_2.getBounds2D())
-            # print(polygon_feature_locations_2.getBounds())
-            # bounds_bad_features = expand_rectangle(
-            #    polygon_feature_locations_2.getBounds2D(),
-            #    20,
-            # )
-            convex_hull_bad_features = PolygonRoi(
-                p2,
-                PolygonRoi.POLYGON,
-            ).getFloatConvexHull()
+            # bounds_bad_features = expand_rectangle(p2.getBounds2D(), 20)
+            hull_bad_features = PolygonRoi(p2, PolygonRoi.POLYGON).getFloatConvexHull()
 
             filtered_features_2 = HashSet()
             for feature in features_2:
-                if not convex_hull_bad_features.contains(*feature.location):
+                if not hull_bad_features.contains(*feature.location):
                     filtered_features_2.add(feature)
             new_features_pointroi = PointRoi(features_to_polygon(filtered_features_2))
             im2_copy = im2.copy()
@@ -479,24 +469,12 @@ def get_SIFT_similarity(
                 highres_w,
             )
         else:
-            affine_transforms[pair] = model.createInverse()
-            # mean displacement of the remaining matching features
-            inlier_displacement = 100 * PointMatch.meanDistance(inliers)
-            inlier_number = 1000 / float(len(inliers))
-            print(
-                (
-                    "model found in section pair {} : distance {:.1f} - {} inliers"
-                ).format(pair, inlier_displacement, len(inliers))
-            )
-
             # metric of average displacement of point matches
-            pairwise_costs[Metric.INLIER_DISPLACEMENT][id1][id2] = pairwise_costs[
-                Metric.INLIER_DISPLACEMENT
-            ][id2][id1] = inlier_displacement
+            pairwise_costs[Metric.INLIER_DISPLACEMENT][id1][id2] = inlier_displacement
+            pairwise_costs[Metric.INLIER_DISPLACEMENT][id2][id1] = inlier_displacement
             # metric of number of inliers
-            pairwise_costs[Metric.INLIER_NUMBER][id1][id2] = pairwise_costs[
-                Metric.INLIER_NUMBER
-            ][id2][id1] = inlier_number
+            pairwise_costs[Metric.INLIER_NUMBER][id1][id2] = inlier_number
+            pairwise_costs[Metric.INLIER_NUMBER][id2][id1] = inlier_number
 
 
 def expand_rectangle(rectangle, percentage):
