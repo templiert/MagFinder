@@ -814,7 +814,7 @@ class Wafer(object):
         add_key_listener_everywhere(KeyListener())
         add_mouse_wheel_listener_everywhere(MouseWheelListener())
 
-    def add(self, annotation_type, poly, annotation_id, template=None):
+    def add(self, annotation_type, poly, annotation_id):
         """Adds an annotation to the wafer and returns it"""
         if annotation_type is AnnotationType.ROI:
             section_id = annotation_id[0]
@@ -1159,7 +1159,7 @@ class Wafer(object):
 
 
 class Annotation(object):
-    def __init__(self, annotation_type, poly, id_, template=None):
+    def __init__(self, annotation_type, poly, id_):
         self.type_ = annotation_type
         self.poly = poly
         self.id_ = id_
@@ -1168,7 +1168,6 @@ class Annotation(object):
         # self.area = poly.getStatistics().pixelCount # removed, too slow
         self.area = self.compute_area()
         self.angle = self.compute_angle()
-        self.template = template
         self.set_poly_properties()
 
     def __str__(self):
@@ -1972,7 +1971,6 @@ def handle_key_p_local():
                 (input_index, annotation_id)
                 if annotation_type is AnnotationType.ROI
                 else input_index,
-                template=section_id,
             )
     wafer.wafer_to_manager()
 
@@ -2022,7 +2020,6 @@ def propagate_to_next_section():
                     annotation_type,
                     GeometryCalculator.points_to_poly(propagated_points),
                     next_section_id,
-                    template=section_id,
                 )
     wafer.wafer_to_manager()
     select_roi_by_name(str(wafer.sections[next_section_id]))
