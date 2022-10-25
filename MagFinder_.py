@@ -69,59 +69,25 @@ def dlog(x):
     print(x)
 
 
-def process_header_parallel(atom, headers, wafer):
-    config = ConfigParser.ConfigParser()
-    with open(wafer.magc_path, "rb") as configfile:
-        config.readfp(configfile)
-    while atom.get() < len(headers):
-        k = atom.getAndIncrement()
-        if k < len(headers):
-            header = headers[k]
-            if "." in header:
-                annotation_type, section_id, annotation_id = type_id(
-                    header, delimiter_0="."
-                )
-                for key, val in config.items(header):
-                    if key in ["polygon", "location"]:
-                        vals = [float(x) for x in val.split(",")]
-                        points = [[x, y] for x, y in zip(vals[::2], vals[1::2])]
-                        wafer.add(
-                            annotation_type,
-                            wafer.GC.points_to_poly(points),
-                            (section_id, annotation_id)
-                            if annotation_type is AnnotationType.ROI
-                            else section_id,
-                        )
-            elif header in ["serialorder", "stageorder"]:
-                if config.get(header, header) != "[]":
-                    setattr(
-                        wafer,
-                        header,
-                        [int(x) for x in config.get(header, header).split(",")],
-                    )
-
-
-def start_threads(function, fraction_cores=1, arguments=None, nThreads=None):
-    threads = []
-    if nThreads == None:
-        threadRange = range(
-            max(int(Runtime.getRuntime().availableProcessors() * fraction_cores), 1)
+def start_threads(function, fraction_cores=1, arguments=None, n_threads=None):
+    if n_threads is None:
+        n_threads = max(
+            int(Runtime.getRuntime().availableProcessors() * fraction_cores), 1
         )
-    else:
-        threadRange = range(nThreads)
-    IJ.log("Running in parallel with ThreadRange = " + str(threadRange))
-    for p in threadRange:
-        if arguments == None:
+    thread_range = range(n_threads)
+    dlog("Running in parallel with ThreadRange = " + str(thread_range))
+    threads = []
+    for p in thread_range:
+        if arguments is None:
             thread = threading.Thread(target=function)
         else:
-            # IJ.log('These are the arguments ' + str(arguments) + 'III type ' + str(type(arguments)))
             thread = threading.Thread(group=None, target=function, args=arguments)
         threads.append(thread)
         thread.start()
-        IJ.log("Thread " + str(p) + " started")
-    for idThread, thread in enumerate(threads):
+        dlog("Thread {} started".format(p))
+    for id_thread, thread in enumerate(threads):
         thread.join()
-        IJ.log("Thread " + str(idThread) + "joined")
+        dlog("Thread {} joined".format(id_thread))
 
 
 class Mode(object):
@@ -275,12 +241,17 @@ class Wafer(object):
             return 0
         return len(self.sections)
 
-    def set_global_mode(self):
-        """useful when wafer accessed from another module"""
-        self.mode = Mode.GLOBAL
+    @property
+    def image(self):
+        if self.mode is Mode.GLOBAL:
+            return self.image_global
+        return self.image_local
 
-    def set_local_mode(self):
-        self.mode = Mode.LOCAL
+    @property
+    def img(self):
+        if self.mode is Mode.GLOBAL:
+            return self.image_global
+        return self.img_local
 
     @contextmanager
     def set_mode(self, mode):
@@ -290,6 +261,19 @@ class Wafer(object):
             yield
         finally:
             self.mode = old_mode
+
+    @staticmethod
+    def set_listeners():
+        """Sets key and mouse wheel listeners"""
+        add_key_listener_everywhere(KeyListener())
+        add_mouse_wheel_listener_everywhere(MouseWheelListener())
+
+    def set_global_mode(self):
+        """useful when wafer accessed from another module"""
+        self.mode = Mode.GLOBAL
+
+    def set_local_mode(self):
+        self.mode = Mode.LOCAL
 
     def init_image_path(self):
         """
@@ -351,35 +335,6 @@ class Wafer(object):
             magc_path = magc_paths[0]
         return magc_path
 
-    def process_header_parallel(self, atom, headers):
-        config = ConfigParser.ConfigParser()
-        while atom.get() < len(headers):
-            k = atom.getAndIncrement()
-            if k < len(headers):
-                header = headers[k]
-                if "." in header:
-                    annotation_type, section_id, annotation_id = type_id(
-                        header, delimiter_0="."
-                    )
-                    for key, val in config.items(header):
-                        if key in ["polygon", "location"]:
-                            vals = [float(x) for x in val.split(",")]
-                            points = [[x, y] for x, y in zip(vals[::2], vals[1::2])]
-                            self.add(
-                                annotation_type,
-                                self.GC.points_to_poly(points),
-                                (section_id, annotation_id)
-                                if annotation_type is AnnotationType.ROI
-                                else section_id,
-                            )
-                elif header in ["serialorder", "stageorder"]:
-                    if config.get(header, header) != "[]":
-                        setattr(
-                            self,
-                            header,
-                            [int(x) for x in config.get(header, header).split(",")],
-                        )
-
     def file_to_wafer(self):
         """Populates the wafer instance from the .magc file"""
         start = System.nanoTime()
@@ -433,64 +388,68 @@ class Wafer(object):
         start = System.nanoTime()
         self.manager.reset()
         if self.mode is Mode.GLOBAL:
-            for landmark in self.landmarks.values():
-                self.manager.addRoi(landmark.poly)
-                landmark.poly.setHandleSize(landmark.type_.handle_size_global)
-            for section_id, section in sorted(self.sections.iteritems()):
-                self.manager.addRoi(section.poly)
-                section.poly.setHandleSize(section.type_.handle_size_global)
-                for annotation_type in [
-                    AnnotationType.FOCUS,
-                    AnnotationType.MAGNET,
-                ]:
-                    annotation = getattr(self, annotation_type.name).get(section_id)
-                    if annotation is not None:
-                        self.manager.addRoi(annotation.poly)
-                        annotation.poly.setHandleSize(
-                            annotation_type.handle_size_global
-                        )
-                if section_id in self.rois:
-                    for _, subroi in sorted(self.rois[section_id].iteritems()):
-                        self.manager.addRoi(subroi.poly)
-                        subroi.poly.setHandleSize(annotation_type.handle_size_global)
-        elif self.mode is Mode.LOCAL:
-            sorted_keys = sorted(self.sections)
-            # sections are ordered in the local stack
-            for id_o, o in enumerate(self.serialorder):
-                section_id = sorted_keys[o]
-                for annotation_type in [
-                    AnnotationType.SECTION,
-                    AnnotationType.FOCUS,
-                    AnnotationType.MAGNET,
-                ]:
-                    annotation = getattr(self, annotation_type.name).get(section_id)
-                    if annotation is not None:
-                        local_poly = self.GC.transform_points_to_poly(
-                            annotation.points, self.poly_transforms[section_id]
-                        )
-                        local_poly.setName(str(annotation))
-                        local_poly.setStrokeColor(annotation_type.color)
-                        local_poly.setImage(self.image)
-                        local_poly.setPosition(0, id_o + 1, 0)
-                        local_poly.setHandleSize(annotation_type.handle_size_local)
-                        self.manager.addRoi(local_poly)
-                if section_id not in self.rois:
-                    continue
-                for _, subroi in sorted(self.rois[section_id].iteritems()):
-                    local_poly = self.GC.transform_points_to_poly(
-                        subroi.points, self.poly_transforms[section_id]
-                    )
-                    local_poly.setName(str(subroi))
-                    local_poly.setStrokeColor(subroi.type_.color)
-                    local_poly.setImage(self.image)
-                    local_poly.setPosition(0, id_o + 1, 0)
-                    local_poly.setHandleSize(subroi.type_.handle_size_local)
-                    self.manager.addRoi(local_poly)
+            self.wafer_to_manager_global()
+        else:
+            self.wafer_to_manager_local()
         IJ.log(
             "Duration wafer_to_manager: {:.2f} in mode {}".format(
                 (System.nanoTime() - start) * 1e-9, self.mode
             )
         )
+
+    def wafer_to_manager_global(self):
+        for landmark in self.landmarks.values():
+            self.manager.addRoi(landmark.poly)
+            landmark.poly.setHandleSize(landmark.type_.handle_size_global)
+        for section_id, section in sorted(self.sections.iteritems()):
+            self.manager.addRoi(section.poly)
+            section.poly.setHandleSize(section.type_.handle_size_global)
+            for annotation_type in [
+                AnnotationType.FOCUS,
+                AnnotationType.MAGNET,
+            ]:
+                annotation = getattr(self, annotation_type.name).get(section_id)
+                if annotation is not None:
+                    self.manager.addRoi(annotation.poly)
+                    annotation.poly.setHandleSize(annotation_type.handle_size_global)
+            if section_id in self.rois:
+                for _, subroi in sorted(self.rois[section_id].iteritems()):
+                    self.manager.addRoi(subroi.poly)
+                    subroi.poly.setHandleSize(annotation_type.handle_size_global)
+
+    def wafer_to_manager_local(self):
+        sorted_keys = sorted(self.sections)
+        # sections are ordered in the local stack
+        for id_o, o in enumerate(self.serialorder):
+            section_id = sorted_keys[o]
+            for annotation_type in [
+                AnnotationType.SECTION,
+                AnnotationType.FOCUS,
+                AnnotationType.MAGNET,
+            ]:
+                annotation = getattr(self, annotation_type.name).get(section_id)
+                if annotation is not None:
+                    local_poly = self.GC.transform_points_to_poly(
+                        annotation.points, self.poly_transforms[section_id]
+                    )
+                    local_poly.setName(str(annotation))
+                    local_poly.setStrokeColor(annotation_type.color)
+                    local_poly.setImage(self.image)
+                    local_poly.setPosition(0, id_o + 1, 0)
+                    local_poly.setHandleSize(annotation_type.handle_size_local)
+                    self.manager.addRoi(local_poly)
+            if section_id not in self.rois:
+                continue
+            for _, subroi in sorted(self.rois[section_id].iteritems()):
+                local_poly = self.GC.transform_points_to_poly(
+                    subroi.points, self.poly_transforms[section_id]
+                )
+                local_poly.setName(str(subroi))
+                local_poly.setStrokeColor(subroi.type_.color)
+                local_poly.setImage(self.image)
+                local_poly.setPosition(0, id_o + 1, 0)
+                local_poly.setHandleSize(subroi.type_.handle_size_local)
+                self.manager.addRoi(local_poly)
 
     def clear_annotations(self):
         """Clears all annotations except the landmarks"""
@@ -586,7 +545,6 @@ class Wafer(object):
                         "location",
                         self.GC.point_to_flat_string(annotation.centroid),
                     )
-
             config.add_section("end_{}".format(annotation_type.name))
         if self.rois:
             config.add_section(AnnotationType.ROI.name)
@@ -753,7 +711,6 @@ class Wafer(object):
         _, _, display_size, _ = self.get_display_parameters()
         self.local_display_size = display_size
         for section_id, section in self.sections.iteritems():
-            # for id in self.sections:
             # image transform
             aff = AffineTransform2D()
             aff.translate([-v for v in section.centroid])
@@ -807,12 +764,6 @@ class Wafer(object):
                 (System.nanoTime() - start) * 1e-9
             )
         )
-
-    @staticmethod
-    def set_listeners():
-        """Sets key and mouse wheel listeners"""
-        add_key_listener_everywhere(KeyListener())
-        add_mouse_wheel_listener_everywhere(MouseWheelListener())
 
     def add(self, annotation_type, poly, annotation_id):
         """Adds an annotation to the wafer and returns it"""
@@ -869,7 +820,8 @@ class Wafer(object):
         if len(selected_indexes) != 1:
             IJ.showMessage(
                 "Warning",
-                "To delete an annotation with [x], one and only one annotation must be selected in blue in the annotation manager",
+                "To delete an annotation with [x], one and only one annotation"
+                " must be selected in blue in the annotation manager",
             )
             return
         selected_poly = self.manager.getRoi(selected_indexes[0])
@@ -893,7 +845,7 @@ class Wafer(object):
                 )
         elif annotation_type is AnnotationType.SECTION:
             # deleting a sections also deletes the linked annotations (roi(s),focus,magnet)
-            section_roi_index = get_roi_index_by_name(str(self.sections[annotation_id]))
+            section_id_manager = get_roi_index_by_name(str(self.sections[section_id]))
             linked_annotations = []
             message = ""
             # build the message by screening all existing linked annotations
@@ -916,69 +868,57 @@ class Wafer(object):
                     message,
                 ]
             )
-            if get_OK(message):
-                if self.image.getNSlices() == 1:
-                    if get_OK(
-                        "Case not yet handled: you are trying to delete the only existing section."
-                        + "\n\nThe plugin will close. Please delete the .magc file and start over from scratch instead.\n\nContinue?"
-                    ):
-                        self.image.close()
-                        self.manager.close()
-                        sys.exit()
-                    else:
-                        return
-                self.image.killRoi()
-                # delete linked annotations in manager and in wafer
-                for linked_annotation in linked_annotations:
-                    index = get_roi_index_by_name(str(linked_annotation))
-                    delete_roi_by_index(index)
-                    del getattr(self, linked_annotation.type_.name)[section_id]
-                # delete section in manager
-                section_roi_index = get_roi_index_by_name(
-                    str(self.sections[section_id])
-                )
-                delete_roi_by_index(section_roi_index)
-                # rearrange serial order
-                # 1. delete the serialorder entry of that section
-                del self.serialorder[sorted(self.sections.keys()).index(section_id)]
-                # 2. decrements the serialorder id of the sections with an id greater than
-                # the one that was deleted
-                self.serialorder = [
-                    o - 1 if (o > sorted(self.sections.keys()).index(section_id)) else o
-                    for o in self.serialorder
-                ]
-
-                del self.sections[section_id]
-                del self.transforms[section_id]
-                del self.poly_transforms[section_id]
-                del self.poly_transforms_inverse[section_id]
-
-                self.image.close()
-                self.manager.reset()
-
-                self.start_local_mode()
-
-                # select the next section
-                if section_roi_index < self.manager.getCount():
-                    set_roi_and_update_roi_manager(section_roi_index)
+            if not get_OK(message):
+                return
+            if self.image.getNSlices() == 1:
+                if get_OK(
+                    "Case not yet handled: you are trying to delete the only existing section."
+                    "\n\nThe plugin will close. Please delete the .magc file"
+                    " and start over from scratch instead.\n\nContinue?"
+                ):
+                    self.image.close()
+                    self.manager.close()
+                    sys.exit()
                 else:
-                    set_roi_and_update_roi_manager(self.manager.getCount() - 1)
+                    return
+            self.image.killRoi()
+            # delete linked annotations in manager and in wafer
+            for linked_annotation in linked_annotations:
+                index = get_roi_index_by_name(str(linked_annotation))
+                delete_roi_by_index(index)
+                del getattr(self, linked_annotation.type_.name)[section_id]
+            # delete section in manager
+            section_id_manager = get_roi_index_by_name(str(self.sections[section_id]))
+            delete_roi_by_index(section_id_manager)
+            # rearrange serial order
+            # 1. delete the serialorder entry of that section
+            del self.serialorder[sorted(self.sections.keys()).index(section_id)]
+            # 2. decrements the serialorder id of the sections with an id greater than
+            # the one that was deleted
+            self.serialorder = [
+                o - 1 if (o > sorted(self.sections.keys()).index(section_id)) else o
+                for o in self.serialorder
+            ]
+
+            del self.sections[section_id]
+            del self.transforms[section_id]
+            del self.poly_transforms[section_id]
+            del self.poly_transforms_inverse[section_id]
+
+            self.image.close()
+            self.manager.reset()
+
+            self.start_local_mode()
+
+            # select the next section
+            if section_id_manager < self.manager.getCount():
+                set_roi_and_update_roi_manager(section_id_manager)
+            else:
+                set_roi_and_update_roi_manager(self.manager.getCount() - 1)
 
     def init_images_global(self):
         self.image_global = IJ.openImage(self.image_path)
         self.img_global = IL.wrap(self.image)
-
-    @property
-    def image(self):
-        if self.mode is Mode.GLOBAL:
-            return self.image_global
-        return self.image_local
-
-    @property
-    def img(self):
-        if self.mode is Mode.GLOBAL:
-            return self.image_global
-        return self.img_local
 
     def arrange_windows(self):
         IJ.getInstance().setLocation(
@@ -1118,7 +1058,6 @@ class Wafer(object):
         for new_key, key in enumerate(sorted(self.sections)):
             if new_key == key:
                 continue
-            # for annotation_type in AnnotationType.all_but_landmark():
             for annotation_type in [
                 AnnotationType.SECTION,
                 AnnotationType.FOCUS,
@@ -1153,7 +1092,11 @@ class Wafer(object):
             )
         ]
 
-    def get_section_id_from_current_local_position(self):
+    def get_section_id_from_local_position(self):
+        """
+        While the local stack is open, returns the section_id corresponding
+        to the current annotation being displayed
+        """
         slice_id = wafer.image.getSlice()
         return sorted(wafer.sections.keys())[wafer.serialorder[slice_id - 1]]
 
@@ -1165,7 +1108,6 @@ class Annotation(object):
         self.id_ = id_
         self.points = GeometryCalculator.poly_to_points(poly)
         self.centroid = self.compute_centroid()
-        # self.area = poly.getStatistics().pixelCount # removed, too slow
         self.area = self.compute_area()
         self.angle = self.compute_angle()
         self.set_poly_properties()
@@ -1175,16 +1117,17 @@ class Annotation(object):
             return "{}-{:04}.{:02}".format(self.type_.string, *self.id_)
         return "{}-{:04}".format(self.type_.string, self.id_)
 
+    def __len__(self):
+        return self.poly.size()
+
     @property
     def header(self):
         if self.type_ is AnnotationType.ROI:
             return "{}.{:04}.{:02}".format(self.type_.string, *self.id_)
         return "{}.{:04}".format(self.type_.string, self.id_)
 
-    def __len__(self):
-        return self.poly.size()
-
     def compute_area(self):
+        """Simply take bounding box area. getStatistics.pixelcount was too slow"""
         bounds = self.poly.getBounds()
         return bounds.getHeight() * bounds.getWidth()
 
@@ -1198,12 +1141,12 @@ class Annotation(object):
     def compute_centroid(self):
         if len(self) == 1:
             return self.points[0]
-        return list(GeometryCalculator.points_to_poly(self.points).getContourCentroid())
+        return list(self.poly.getContourCentroid())
 
     def compute_angle(self):
         if len(self) < 2:
             return None
-        return self.poly.getFloatAngle(  # TODO: use class method?
+        return self.poly.getFloatAngle(
             self.points[0][0],
             self.points[0][1],
             self.points[1][0],
@@ -1276,15 +1219,6 @@ class GeometryCalculator(object):
         for source_point in source_points:
             target_point = jarray.array([0, 0], "d")
             aff.apply(source_point, target_point)
-            target_points.append(target_point)
-        return target_points
-
-    @staticmethod
-    def transform_inverse_points(source_points, aff):
-        target_points = []
-        for source_point in source_points:
-            target_point = jarray.array([0, 0], "d")
-            aff.applyInverse(target_point, source_point)
             target_points.append(target_point)
         return target_points
 
@@ -2038,7 +1972,7 @@ def handle_key_a():
 
     name_suggestions = []
     if wafer.mode is Mode.LOCAL:
-        section_id = wafer.get_section_id_from_current_local_position()
+        section_id = wafer.get_section_id_from_local_position()
 
         if drawn_roi.size() == 2:
             name_suggestions.append("magnet-{:04}".format(section_id))
