@@ -60,6 +60,8 @@ def get_distance(p_1, p_2):
 
 
 class Metric(object):
+    """Enum for distance metrics"""
+
     INLIER_NUMBER = "inlier"
     INLIER_DISPLACEMENT = "displacement"
 
@@ -68,75 +70,42 @@ class Metric(object):
         return cls.INLIER_NUMBER, cls.INLIER_DISPLACEMENT
 
 
+class SIFTMode(object):
+    """Modes for SIFT"""
+
+    FINE = "fine"
+    COARSE = "coarse"
+
+
 def dlog(x):
     """Double log to print and IJ.log"""
     IJ.log(x)
     print(x)
 
 
-def scale_model2D(model2d, factor, highres_w):
-    """Rescales a model2d transform"""
-    scale = AffineModel2D()
-    scale.set(factor, 0, 0, factor, 0, 0)
-
-    translation = AffineModel2D()
-    translation.set(1, 0, 0, 1, highres_w / 2.0, highres_w / 2.0)
-
-    output = AffineModel2D()
-    output.preConcatenate(scale)
-    # output.preConcatenate(translation)
-    output.preConcatenate(model2d)
-    # output.preConcatenate(translation.createInverse())
-    output.preConcatenate(scale.createInverse())
-
-    dlog("original model2d" + str(model2d))
-    dlog("with scaling: " + str(output))
-
-    # output_test = AffineModel2D()
-    # output_test.preConcatenate(scale)
-    # output_test.preConcatenate(translation)
-    # output_test.preConcatenate(model2d)
-    # output_test.preConcatenate(translation.createInverse())
-    # output_test.preConcatenate(scale.createInverse())
-    # IJ.log("with scaling and translation: " + str(output_test))
-    return output
-
-
 def folder_content(folder):
     return [os.path.join(folder, name) for name in sorted(os.listdir(folder))]
 
 
-def get_OK(text):
-    gd = GenericDialog("User prompt")
-    gd.addMessage(text)
-    gd.hideCancelButton()
-    gd.enableYesNoCancel()
-    # focus_on_ok(gd)
-    gd.showDialog()
-    return gd.wasOKed()
-
-
-def start_threads(function, fraction_cores=1, arguments=None, nThreads=None):
-    threads = []
-    if nThreads == None:
-        threadRange = range(
-            max(int(Runtime.getRuntime().availableProcessors() * fraction_cores), 1)
+def start_threads(function, fraction_cores=1, arguments=None, n_threads=None):
+    if n_threads is None:
+        n_threads = max(
+            int(Runtime.getRuntime().availableProcessors() * fraction_cores), 1
         )
-    else:
-        threadRange = range(nThreads)
-    IJ.log("Running in parallel with ThreadRange = " + str(threadRange))
-    for p in threadRange:
-        if arguments == None:
+    thread_range = range(n_threads)
+    dlog("Running in parallel with ThreadRange = " + str(thread_range))
+    threads = []
+    for p in thread_range:
+        if arguments is None:
             thread = threading.Thread(target=function)
         else:
-            # IJ.log('These are the arguments ' + str(arguments) + 'III type ' + str(type(arguments)))
             thread = threading.Thread(group=None, target=function, args=arguments)
         threads.append(thread)
         thread.start()
-        IJ.log("Thread " + str(p) + " started")
-    for idThread, thread in enumerate(threads):
+        dlog("Thread {} started".format(p))
+    for id_thread, thread in enumerate(threads):
         thread.join()
-        IJ.log("Thread " + str(idThread) + "joined")
+        dlog("Thread {} joined".format(id_thread))
 
 
 def serialize(x, path):
@@ -196,9 +165,7 @@ def serialize_matching_outputs(
             ],
         ),
     )
-
-    IJ.log("Duration serialize matching outputs: " + str(time.clock() - start))
-    print("Duration serialize matching outputs: " + str(time.clock() - start))
+    dlog("Duration serialize matching outputs: " + str(time.clock() - start))
 
 
 def deserialize_matching_outputs(folder):
@@ -223,8 +190,7 @@ def deserialize_matching_outputs(folder):
         for metric, cost in zip(Metric.all(), section_costs):
             costs[metric].append(cost)
         affine_transforms.update(section_affine_transforms)
-    IJ.log("Duration deserialize matching outputs: " + str(time.clock() - start))
-    print("Duration deserialize matching outputs: " + str(time.clock() - start))
+    dlog("Duration deserialize matching outputs: " + str(time.clock() - start))
     return costs, affine_transforms
 
 
@@ -239,43 +205,6 @@ def mkdir_p(path):
         else:
             IJ.log("Exception during folder creation :" + str(e))
     return path
-
-
-# def subpixel_open_crop(crop_params):
-#     IJ.log("open_crop: crop_params={}".format(crop_params))
-#     cropped = open_subpixel_crop(
-#         crop_params.high_res_path,
-#         crop_params.centroid_x,
-#         crop_params.centroid_y,
-#         crop_params.highres_w,
-#         crop_params.highres_w,
-#         crop_params.channel,
-#     )
-#     highres_roi_im = subpixel_crop(
-#         cropped,
-#         0.5 * (cropped.getWidth() - crop_params.highres_w),
-#         0.5 * (cropped.getHeight() - crop_params.highres_w),
-#         crop_params.highres_w,
-#         crop_params.highres_w,
-#     )
-#     return highres_roi_im
-
-
-# def open_crop_parallel(
-#     atom,
-#     crop_info,
-# ):
-#     """There was a problem with the parallelization of this operation"""
-#     while atom.get() < len(crop_info):
-#         k = atom.getAndIncrement()
-#         if k < len(crop_info):
-#             IJ.log("Open crop rotate image {}".format(k))
-#             p = crop_info[k]
-#             IJ.log("crop_info - " + str(p))
-#             highres_roi_im = subpixel_open_crop(p)
-#             highres_roi_im = normLocalContrast(highres_roi_im, 50, 50, 3, True, True)
-#             IJ.run(highres_roi_im, "8-bit", "")
-#             IJ.save(highres_roi_im, p.roi_path)
 
 
 def create_sift_parameters(
@@ -295,7 +224,7 @@ def create_sift_parameters(
 
 
 def sift_params_to_string(sift_params):
-    return "{}_{}_{}_{}_{}_{:.3f}".format(
+    return "{}_{}_{}_{}_{}_{:.1f}".format(
         sift_params.fdBins,
         sift_params.fdSize,
         sift_params.steps,
@@ -313,16 +242,14 @@ def parallel_compute_sift(atom, paths, saveFolder, sift_params, roi=None):
         float_SIFT = FloatArray2DSIFT(sift_params)
         ij_SIFT = SIFT(float_SIFT)
         im = IJ.openImage(paths[k])
-        # important: cannot use k, must use section_id
-        # section_id = int(os.path.basename(paths[k]).split("_")[-1])
         if roi is not None:
             im = crop(im, roi)
         ip = im.getProcessor()
         features = HashSet()
         ij_SIFT.extractFeatures(ip, features)
-        IJ.log("Section {}: {} features extracted".format(k, features.size()))
+        dlog("Section {}: {} features extracted".format(k, features.size()))
         im.close()
-        serialize(features, os.path.join(saveFolder, "features_" + str(k).zfill(4)))
+        serialize(features, os.path.join(saveFolder, "features_{:04}".format(k)))
         del features
 
 
@@ -334,7 +261,6 @@ def get_SIFT_similarity_parallel(
     affine_transforms,
     translation_threshold,
     highres_w,
-    # highres_corners,
 ):
     translation_center = AffineTransform()
     translation_center.translate(0.5 * highres_w, 0.5 * highres_w)
@@ -344,7 +270,7 @@ def get_SIFT_similarity_parallel(
             continue
         id1, id2 = pairs[k]
         if k % 100 == 0:
-            IJ.log("Processing pair {} ".format((id1, id2)))
+            dlog("Processing pair {} ".format((id1, id2)))
         get_SIFT_similarity(
             id1,
             id2,
@@ -369,35 +295,34 @@ def change_basis(A, B):
 
 
 def translation_norm(A):
+    """Returns the norm of the translation vector of the affine transorm"""
     return Math.sqrt(A.getTranslateX() ** 2 + A.getTranslateY() ** 2)
 
 
-def inliers_to_polygons(inliers, model):
+def inliers_to_polygons(inliers):
+    """For debugging purposes"""
     p1, p2 = Polygon(), Polygon()
     for inlier in inliers:
-        # p1.addPoint(*[int(a) for a in model.applyInverse(inlier.getP1().getL())])
-        # p1.addPoint(*[int(a) for a in model.applyInverse(inlier.getP1().getW())])
-        # print("inlier {}".format(inlier.getP1().getL()))
         p1.addPoint(*[int(a) for a in inlier.getP1().getL()])
         p2.addPoint(*[int(a) for a in inlier.getP2().getL()])
     return p1, p2
 
 
 def features_to_polygon(features):
-    print("B".center(100, "-"))
+    """For debugging purposes"""
     p = Polygon()
     for feature in features:
         p.addPoint(*[int(a) for a in feature.location])
     return p
 
-    # features_centroid_2 = PolygonRoi(
-    #     p2,
-    #     Roi.POLYGON,
-    # ).getContourCentroid()
-    # features_excentricity = Math.sqrt(
-    #     (features_centroid_2[0] - highres_w / 2.0) ** 2
-    #     + (features_centroid_2[1] - highres_w / 2.0) ** 2
-    # )
+
+def filter_features(features, center, radius):
+    """Returns features located within center with radius"""
+    filtered_features = HashSet()
+    for feature in features:
+        if get_distance(feature.location, center) < radius:
+            filtered_features.add(feature)
+    return filtered_features
 
 
 def get_SIFT_similarity(
@@ -412,11 +337,10 @@ def get_SIFT_similarity(
     translation_center,
     attempt,
 ):
-    # root = r"C:\tests\magreorderer\version_2_same_section\ordering_working_folder\roi_images"
-    # root = r"C:\tests\magreorderer\version_1_different_section\ordering_working_folder\roi_images"
+    debug = False
     pair = id1, id2
-    highres_center = [0.5 * highres_w] * 2
     dlog("processing pair {}".format(pair))
+    highres_center = [0.5 * highres_w] * 2
     candidates = ArrayList()
     FeatureTransform.matchFeatures(features_1, features_2, candidates, 0.92)
     inliers = ArrayList()
@@ -428,7 +352,6 @@ def get_SIFT_similarity(
             1000,  # iterations
             20,  # maxDisplacement
             0.001,  # ratioOfConservedFeatures wafer_39_beads
-            # min_matched_features, TODO deprecated or useful to revive?
         )
     except NotEnoughDataPointsException as e:
         model_found = False
@@ -443,8 +366,8 @@ def get_SIFT_similarity(
         )
         dlog(
             (
-                "model found in section pair {} : distance {:.1f} - {} inliers"
-                "/n center_rebased_transform {} {}"
+                "model found in section pair {} | distance {:.1f} | {} inliers"
+                " | center_rebased_transform {} | translation norm {}"
             ).format(
                 pair,
                 inlier_displacement,
@@ -453,60 +376,44 @@ def get_SIFT_similarity(
                 translation_norm(center_rebased_transform),
             )
         )
-        # p1, p2 = inliers_to_polygons(inliers, model)
+        if debug:
+            p1, p2 = inliers_to_polygons(inliers)
         if over_translation(center_rebased_transform, translation_threshold):
-            print("WARNING: over translation {}".format(pair).center(100, "-"))
-            # for p, id in zip((p1, p2), pair):
-            #    im = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id)))
-            #    im.show()
-            #    im.setRoi(PointRoi(p), True)
-            #    im.setTitle("{}_{}".format(pair, id))
+            dlog("Over translation {}".format(pair).center(25, "-"))
+            if debug:
+                for p, id in zip((p1, p2), pair):
+                    im = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id)))
+                    im.show()
+                    im.setRoi(PointRoi(p), True)
+                    im.setTitle("{}_{}".format(pair, id))
 
-            # corner_1 = highres_corners[id1]
-            # corner_2 = highres_corners[id2]
-            # for inlier in inliers:
-            #    world_inlier_1 = [
-            #        a + b for a, b in zip(corner_1, inlier.getP1().getL())
-            #    ]
-            #    world_inlier_2 = [
-            #        a + b for a, b in zip(corner_2, inlier.getP2().getL())
-            #    ]
             filtering_radius = 0.5 * (1 - 0.1 * (attempt + 1)) * highres_w
-            dlog("filtering_radius {}".format(filtering_radius))
-            filtered_features_1 = HashSet()
-            for feature in features_1:
-                if get_distance(feature.location, highres_center) < filtering_radius:
-                    filtered_features_1.add(feature)
-            filtered_features_2 = HashSet()
-            for feature in features_2:
-                if get_distance(feature.location, highres_center) < filtering_radius:
-                    filtered_features_2.add(feature)
-            if len(filtered_features_2) < 5:
+            dlog("filtering radius {}".format(filtering_radius))
+            new_features_1 = filter_features(
+                features_1, highres_center, filtering_radius
+            )
+            new_features_2 = filter_features(
+                features_2, highres_center, filtering_radius
+            )
+            if len(new_features_2) < 5:
                 dlog("Less than 5 features after filtering pair {}".format(pair))
                 return
             dlog(
-                "len features_2 {}, filtered_features_2 {}".format(
-                    len(features_2), len(filtered_features_2)
+                "len features_2 {}, new_features_2 {}".format(
+                    len(features_2), len(new_features_2)
                 )
             )
-            # return
-            # bounds_bad_features = expand_rectangle(p2.getBounds2D(), 20)
-            # hull_bad_features = PolygonRoi(p2, PolygonRoi.POLYGON).getFloatConvexHull()
-
-            # for feature in features_2:
-            #    if not hull_bad_features.contains(*feature.location):
-            #        filtered_features_2.add(feature)
-
-            # new_features_pointroi = PointRoi(features_to_polygon(filtered_features_2))
-            # dlog("A".center(100, "-"))
-            # im2 = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id2)))
-            # im2.show()
-            # im2.setRoi(new_features_pointroi, True)
+            if debug:
+                new_features_pointroi = PointRoi(features_to_polygon(new_features_2))
+                dlog("A".center(100, "-"))
+                im2 = IJ.openImage(os.path.join(root, "roi_{:04}.tif".format(id2)))
+                im2.show()
+                im2.setRoi(new_features_pointroi, True)
             get_SIFT_similarity(
                 id1,
                 id2,
-                filtered_features_1,
-                filtered_features_2,
+                new_features_1,
+                new_features_2,
                 pairwise_costs,
                 affine_transforms,
                 translation_threshold,
@@ -524,7 +431,6 @@ def get_SIFT_similarity(
 
 
 def expand_rectangle(rectangle, percentage):
-    print("rectangle: {}".format(rectangle))
     new_width = rectangle.getWidth() * (100 + percentage) / float(100)
     new_height = rectangle.getHeight() * (100 + percentage) / float(100)
     new_x = rectangle.getX() - 0.5 * percentage / float(100) * rectangle.getWidth()
@@ -535,32 +441,26 @@ def expand_rectangle(rectangle, percentage):
         int(new_width),
         int(new_height),
     )
-    print("new rectangle: {}".format(new_rectangle))
     return new_rectangle
 
 
-def over_translation(
-    affine_transform,
-    translation_threshold,
-):
+def over_translation(aff, translation_threshold):
     """
-    Compares the translation part of the transform to a threshold
+    Compares the norm of the translation to a threshold.
     affine_transform is a AffineModel2D (not AffineTransform2D)
     """
     return (
-        Math.sqrt(
-            affine_transform.getTranslateX() ** 2
-            + affine_transform.getTranslateY() ** 2
-        )
+        Math.sqrt(aff.getTranslateX() ** 2 + aff.getTranslateY() ** 2)
         > translation_threshold
     )
 
 
-def centroid(points):
-    return polygonroi_from_points(points).getContourCentroid()
-
-
 def crop_open(im_path, x, y, w, h, channel):
+    """
+    Opens only the given ROI in an image saved on disk
+    Works with .tif images that do not fit into memory
+    x,y,w,h are int
+    """
     assert isinstance(x, int)
     assert isinstance(y, int)
     assert isinstance(w, int)
@@ -579,6 +479,7 @@ def crop_open(im_path, x, y, w, h, channel):
 
 
 def open_subpixel_crop(im_path, x, y, w, h, channel):
+    """Opens only the given ROI with subpixel accuracy. See crop_open"""
     im = crop_open(im_path, int(x), int(y), w + 1, h + 1, channel)
     IJ.run(
         im,
@@ -588,11 +489,11 @@ def open_subpixel_crop(im_path, x, y, w, h, channel):
     return crop(im, Roi(0, 0, w, h))
 
 
-def rotate(im, angleDegree):
+def rotate(im, angle_degree):
     IJ.run(
         im,
         "Rotate... ",
-        "angle=" + str(angleDegree) + " grid=1 interpolation=Bilinear",
+        "angle={} grid=1 interpolation=Bilinear".format(angle_degree),
     )
 
 
@@ -602,29 +503,20 @@ def polygonroi_from_points(points):
     return PolygonRoi(xPoly, yPoly, PolygonRoi.POLYGON)
 
 
-def subpixel_crop(im, x, y, w, h):
-    IJ.run(
-        im,
-        "Translate...",
-        "x={} y={} interpolation=Bilinear".format(int(x) - x, int(y) - y),
-    )
-    return crop(im, Roi(int(x), int(y), w, h))
-
-
 def crop(im, roi):
     ip = im.getProcessor()
     ip.setRoi(roi)
-    im = ImagePlus("{}_Cropped".format(im.getTitle()), ip.crop())
+    im = ImagePlus("{}_cropped".format(im.getTitle()), ip.crop())
     return im
 
 
-def normLocalContrast(im, x, y, stdev, center, stretch):
+def norm_local_contrast(im, x, y, stdev, center, stretch):
     NormalizeLocalContrast().run(im.getProcessor(), x, y, stdev, center, stretch)
     return im
 
 
 def pairwise(iterable):
-    # pairwise('ABCDEFG') --> AB BC CD DE EF FG
+    """pairwise('ABCDEFG') --> AB BC CD DE EF FG"""
     a, b = itertools.tee(iterable)
     next(b, None)
     return zip(a, b)
@@ -667,32 +559,13 @@ def add_key_listener_everywhere(myListener):
         elem.addKeyListener(myListener)
 
 
-# # # sift_coarse_params = create_sift_parameters(
-# # #     fdSize=4, initialSigma=1.6, steps=3, minOctaveSize=64, maxOctaveSize=600
-# # # )
-# # # # sift_coarse_params = create_sift_parameters(
-# # # # fdSize=4, initialSigma=1.6, steps=3, minOctaveSize=64, maxOctaveSize=450
-# # # # )
-# # # sift_fine_params = create_sift_parameters(
-# # #     fdSize=4, initialSigma=1.6, steps=4, minOctaveSize=32, maxOctaveSize=1500
-# # # )
-
-# # wafer 52
-# sift_coarse_params = create_sift_parameters(
-#     fdSize=4, initialSigma=1.6, steps=6, minOctaveSize=64, maxOctaveSize=2000
-# )
-# sift_fine_params = create_sift_parameters(
-#     fdSize=4, initialSigma=1.6, steps=12, minOctaveSize=16, maxOctaveSize=3000
-# )
-
-
 def intr(x):
     return int(round(x))
 
 
 class MagReorderer(object):
     def __init__(self, wafer):
-        IJ.log("Starting MagReorderer ...")
+        dlog("Starting MagReorderer ...")
         self.user_params = self.get_user_params()
         if self.user_params is None:
             return
@@ -705,15 +578,14 @@ class MagReorderer(object):
             os.path.join(self.wafer.root, "ordering_working_folder")
         )
         self.roi_folder = mkdir_p(os.path.join(self.working_folder, "roi_images"))
-        self.coarse_features_folder = self.get_features_folder("coarse")
-        self.fine_features_folder = self.get_features_folder("fine")
+        self.coarse_features_folder = self.get_features_folder(SIFTMode.COARSE)
+        self.fine_features_folder = self.get_features_folder(SIFTMode.FINE)
         self.n_sections = len(self.wafer)
-
         self.all_coarse_sift_matches = mkdir_p(
-            os.path.join(self.working_folder, "all_coarse_sift_matches")
+            os.path.join(self.working_folder, "coarse_matches")
         )
         self.neighbor_fine_sift_matches = mkdir_p(
-            os.path.join(self.working_folder, "neighbor_fine_sift_matches")
+            os.path.join(self.working_folder, "fine_matches")
         )
         self.sift_order_path = os.path.join(self.working_folder, "sift_order.txt")
         # size of the extracted roi in the high res image
@@ -721,9 +593,6 @@ class MagReorderer(object):
             Math.sqrt(next(iter(self.wafer.rois.values()))[0].area)
             * self.downsampling_factor
         )
-        # self.highres_roi_corners = mkdir_p(
-        #    os.path.join(self.working_folder, "highres_roi_corners")
-        # )
 
     def get_user_params(self):
         p = {}
@@ -799,7 +668,7 @@ class MagReorderer(object):
         )[n]
 
     def get_sift_parameters(self, sift_mode):
-        if sift_mode == "coarse":
+        if sift_mode is SIFTMode.COARSE:
             return create_sift_parameters(
                 4,
                 self.user_params["sift_gaussian_1"],
@@ -807,7 +676,7 @@ class MagReorderer(object):
                 self.user_params["sift_min_octave_1"],
                 self.user_params["sift_max_octave_1"],
             )
-        elif sift_mode == "fine":
+        elif sift_mode is SIFTMode.FINE:
             return create_sift_parameters(
                 4,
                 self.user_params["sift_gaussian_2"],
@@ -841,7 +710,7 @@ class MagReorderer(object):
         small_x = omeMeta.getPixelsSizeX(0).getNumberValue()
 
         downsampling_factor = large_x / float(small_x)
-        IJ.log(
+        dlog(
             "Downsampling factor between low and high res images: {}".format(
                 downsampling_factor
             ).center(100, "-")
@@ -852,14 +721,13 @@ class MagReorderer(object):
         """
         Reorders the sections based on the ROI defined in each section
         """
-        # TODO parameters from user
-        IJ.log("Reordering ...".center(100, "-"))
+        dlog("Reordering ...".center(100, "-"))
 
         # extract the ROIs in the high-res image
         self.extract_high_res_rois()
 
         # coarse sift matching
-        self.get_matches("coarse", self.all_coarse_sift_matches)
+        self.get_matches(SIFTMode.COARSE, self.all_coarse_sift_matches)
         # return
 
         # determine neighbors based on different metrics
@@ -877,9 +745,8 @@ class MagReorderer(object):
                 ]
             )
         )
-        IJ.log("computing neighbor_pairs took " + str(time.clock() - start))
-        print("computing neighbor_pairs took " + str(time.clock() - start))
-        IJ.log(
+        dlog("computing neighbor_pairs took " + str(time.clock() - start))
+        dlog(
             "These are the neighbor pairs after coarse matching {}".format(
                 neighbor_pairs
             )
@@ -888,12 +755,11 @@ class MagReorderer(object):
         # fine sift matching among the neighbor pairs
         start = time.clock()
         self.get_matches(
-            "fine",
+            SIFTMode.FINE,
             self.neighbor_fine_sift_matches,
             pairs=neighbor_pairs,
         )
-        IJ.log("get_matches took " + str(time.clock() - start))
-        print("get_matches took " + str(time.clock() - start))
+        dlog("get_matches took " + str(time.clock() - start))
 
         # compute order based on neighbor distances
         self.compute_order(self.neighbor_fine_sift_matches)
@@ -905,9 +771,9 @@ class MagReorderer(object):
 
     def extract_high_res_rois(self):
         """Extracts the ROIs in the high res image"""
-        IJ.log("Extracting ROI images in {} sections...".format(self.n_sections))
+        dlog("Extracting ROI images in {} sections...".format(self.n_sections))
         if len(os.listdir(self.roi_folder)) == self.n_sections:
-            IJ.log("ROI images already extracted")
+            dlog("ROI images already extracted")
             return
         CropParam = namedtuple(
             "CropParam",
@@ -920,27 +786,17 @@ class MagReorderer(object):
             ],
         )
         crop_params = []
-        # highres_corners = []
         for id_enumerate, key in enumerate(sorted(self.wafer.sections)):
             roi = self.wafer.rois[key][0]
             highres_centroid = [
                 roi.centroid[0] * float(self.downsampling_factor),
                 roi.centroid[1] * float(self.downsampling_factor),
             ]
-            # highres_corners.append(
-            #    [
-            #        highres_centroid[0] - 0.5 * self.highres_w,
-            #        highres_centroid[1] - 0.5 * self.highres_w,
-            #    ]
-            # )
             crop_params.append(
                 CropParam(
                     roi_path=os.path.join(
                         self.roi_folder,
                         "roi_{:04}.tif".format(id_enumerate),
-                        # "roi_x_{:.5f}_y_{:.5f}_{:04}.tif".format(
-                        #    highres_corner[0], highres_corner[1], id_enumerate
-                        # ),
                     ),
                     highres_path=self.image_path,
                     highres_w=self.highres_w,
@@ -950,11 +806,10 @@ class MagReorderer(object):
                     else None,
                 )
             )
-        # serialize(highres_corners, self.highres_roi_corners)
-        # # something failing when using in parallel
+        # # TODO something failing when using in parallel
         # start_threads(
         # open_crop_parallel,
-        # nThreads=1,
+        # n_threads=1,
         # # fraction_cores=1,
         # arguments=(AtomicInteger(0), crop_params,),
         # )
@@ -968,7 +823,7 @@ class MagReorderer(object):
                 crop_param.channel,
             )
             if self.user_params["contrast"]:
-                highres_roi_im = normLocalContrast(
+                highres_roi_im = norm_local_contrast(
                     highres_roi_im,
                     self.user_params["contrast_size"],
                     self.user_params["contrast_size"],
@@ -982,11 +837,11 @@ class MagReorderer(object):
     def compute_features(self, sift_params, features_folder):
         """Computes in parallel sift features of the extracted ROI images"""
         if len(os.listdir(features_folder)) == self.n_sections:
-            IJ.log("Features already computed.")
+            dlog("Features already computed.")
             return
         roi_paths = folder_content(self.roi_folder)
-        IJ.log(
-            "Computing all features in parallel with sift params {} ...".format(
+        dlog(
+            "Compute all features in parallel with sift params {} ...".format(
                 sift_params
             )
         )
@@ -1000,16 +855,16 @@ class MagReorderer(object):
                 sift_params,
             ),
         )
-        IJ.log("Computing features done.".center(100, "-"))
+        dlog("Compute features done.".center(100, "-"))
 
     def compute_matches(self, features_folder, matches_folder, pairs=None):
         """Computes in parallel the sift matches among the given pairs"""
         if len(os.listdir(matches_folder)) == self.n_sections:
-            IJ.log(
+            dlog(
                 "The matches with these parameters have already been computed. Loading from file ..."
             )
             return
-        IJ.log("Loading all features from file...")
+        dlog("Loading all features from file...")
         features_paths = folder_content(features_folder)
         all_features = [0] * len(features_paths)
         start_threads(
@@ -1021,7 +876,7 @@ class MagReorderer(object):
                 all_features,
             ],
         )
-        IJ.log("All features loaded")
+        dlog("All features loaded")
 
         costs = {
             metric: self.wafer.tsp_solver.init_mat(self.n_sections, initValue=50000)
@@ -1030,18 +885,16 @@ class MagReorderer(object):
         affine_transforms = {}
 
         if pairs is None:
-            IJ.log("Computing all pairwise matches...")
+            dlog("Computing all pairwise matches...")
             pairs = list(itertools.combinations(range(self.n_sections), 2))
 
         translation_threshold = 0.2 * self.highres_w
         dlog("translation threshold {}".format(translation_threshold))
         # compute matches in parallel
-        IJ.log("Computing SIFT matches ...".center(100, "-"))
-        # highres_corners = deserialize(self.highres_roi_corners)
+        dlog("Compute SIFT matches ...".center(100, "-"))
         start_threads(
             get_SIFT_similarity_parallel,
             fraction_cores=0.95,
-            # nThreads=1,
             arguments=[
                 AtomicInteger(0),
                 pairs,
@@ -1050,16 +903,14 @@ class MagReorderer(object):
                 affine_transforms,
                 translation_threshold,
                 self.highres_w,
-                # highres_corners,
             ],
         )
-        # return
         serialize_matching_outputs(
             costs,
             affine_transforms,
             matches_folder,
         )
-        IJ.log("SIFT matches computed.".center(100, "-"))
+        dlog("SIFT matches computed.".center(100, "-"))
 
     def get_matches(self, sift_mode, matches_folder, pairs=None):
         """
@@ -1099,22 +950,22 @@ class MagReorderer(object):
             )[:neighborhood]
             all_neighbor_pairs.extend(neighbor_pairs)
 
-        IJ.log("Pairs from metric {}: {}".format(metric, all_neighbor_pairs))
+        dlog("Pairs from metric {}: {}".format(metric, all_neighbor_pairs))
         return [x[1] for x in all_neighbor_pairs]
 
     def compute_order(self, matches_folder, metric=Metric.INLIER_NUMBER):
         """Computes and saves the order given the path of the stored matches"""
         if os.path.isfile(self.sift_order_path):
-            IJ.log("Order already computed. Loading from file ...".center(100, "-"))
+            dlog("Order already computed. Loading from file ...".center(100, "-"))
             with open(self.sift_order_path, "r") as f:
                 self.wafer.serialorder = [int(x) for x in f.readline().split(",")]
             return
-        IJ.log("Computing order ...".center(100, "-"))
+        dlog("Computing order ...".center(100, "-"))
         pairwise_costs = self.get_cost_mat(matches_folder, metric=metric)
         order = self.wafer.tsp_solver.compute_tsp_order(pairwise_costs)
         with open(self.sift_order_path, "w") as f:
             f.write(",".join([str(o) for o in order]))
-        IJ.log("The order is: {}".format(order))
+        dlog("The order is: {}".format(order))
         self.wafer.serialorder = order
 
     def align_sections(self):
@@ -1172,7 +1023,7 @@ class MagReorderer(object):
                 # as determined by the section order, but no match
                 # has been found between these two.
                 # Use identity transform instead.
-                IJ.log(
+                dlog(
                     "Warning: transform missing in "
                     " the pair of sections {}".format((o2, o1))
                 )
@@ -1185,10 +1036,9 @@ class MagReorderer(object):
                     pair_local_transform
                 )
                 if not (0.9 < transform_scaling < 1.1):
-                    IJ.log(
-                        "Warning: bad scaling of the transform for pair {}. Using identity instead".format(
-                            (o1, o2)
-                        )
+                    dlog(
+                        "Warning: bad scaling of the transform for pair {}."
+                        " Using identity instead".format((o1, o2))
                     )
                     pair_local_transform = AffineTransform2D()
             # concatenate cumulative_local_transform
@@ -1215,7 +1065,7 @@ class MagReorderer(object):
         self.wafer.clear_transforms()
         self.wafer.compute_transforms()
         self.wafer.wafer_to_manager()
-        IJ.log("The sections have been updated".center(100, "-"))
+        dlog("The sections have been updated".center(100, "-"))
 
     def show_roi_stack(self):
         user_view_size = 1000
@@ -1290,24 +1140,24 @@ def handle_keypress(keyEvent):
     keycode = keyEvent.getKeyCode()
 
     if keycode == KeyEvent.VK_D:
-        IJ.log("D " + str(s).zfill(4))
+        dlog("D " + str(s).zfill(4))
         if s > 0:
-            IJ.log("before " + str(order))
+            dlog("before " + str(order))
             # order[s-1], order[s] = order[s], order[s-1]
             # new_s = s-1
             # update_stack(new_s+1)
             update_stack(s - 1, s)
-            IJ.log("after " + str(order))
+            dlog("after " + str(order))
 
     if keycode == KeyEvent.VK_F:
-        IJ.log("F " + str(s).zfill(4))
+        dlog("F " + str(s).zfill(4))
         if s < len(order) - 1:
-            IJ.log("before " + str(order))
+            dlog("before " + str(order))
             # order[s+1], order[s] = order[s], order[s+1]
             # new_s = s+1
             # update_stack(new_s+1)
             update_stack(s + 1, s)
-            IJ.log("after " + str(order))
+            dlog("after " + str(order))
 
     if keycode in [
         KeyEvent.VK_RIGHT,
@@ -1393,7 +1243,7 @@ def ordered_transformed_imgstack(order, affine_transforms, loaded_imgs, view_spe
         if (i, j) in affine_transforms:
             current_transform = affine_transforms[(i, j)].copy()
         else:
-            IJ.log("Warning: the pair ({},{}) is not in the transforms".format(i, j))
+            dlog("Warning: the pair ({},{}) is not in the transforms".format(i, j))
             current_transform = AffineTransform2D()
 
         current_transform.preConcatenate(transform)
