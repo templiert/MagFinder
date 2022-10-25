@@ -63,6 +63,12 @@ ACCEPTED_IMAGE_FORMATS = (
 )
 
 
+def dlog(x):
+    """Double log to print and IJ.log"""
+    IJ.log(x)
+    print(x)
+
+
 def process_header_parallel(atom, headers, wafer):
     config = ConfigParser.ConfigParser()
     with open(wafer.magc_path, "rb") as configfile:
@@ -153,10 +159,19 @@ class AnnotationType(object):
         ]
 
     @classmethod
-    def all_except_landmark(cls):
+    def all_but_landmark(cls):
         """Returns all annotation types except landmarks"""
         return [
             cls.SECTION,
+            cls.ROI,
+            cls.FOCUS,
+            cls.MAGNET,
+        ]
+
+    @classmethod
+    def section_annotations(cls):
+        """Returns all annotation types except landmarks"""
+        return [
             cls.ROI,
             cls.FOCUS,
             cls.MAGNET,
@@ -186,7 +201,7 @@ def transfer_wafer(wafer_1, wafer_2):
     )
     wafer_2.clear_annotations()
     for key in sorted(wafer_1.sections):
-        for annotation_type in AnnotationType.all_except_landmark():
+        for annotation_type in AnnotationType.all_but_landmark():
             if hasattr(wafer_1, annotation_type.name) and key in getattr(
                 wafer_1, annotation_type.name
             ):
@@ -1103,7 +1118,7 @@ class Wafer(object):
         for new_key, key in enumerate(sorted(self.sections)):
             if new_key == key:
                 continue
-            # for annotation_type in AnnotationType.all_except_landmark():
+            # for annotation_type in AnnotationType.all_but_landmark():
             for annotation_type in [
                 AnnotationType.SECTION,
                 AnnotationType.FOCUS,
@@ -1137,6 +1152,10 @@ class Wafer(object):
                 set(suggest_ids(section_rois.keys())).union(set(section_rois))
             )
         ]
+
+    def get_section_id_from_current_local_position(self):
+        slice_id = wafer.image.getSlice()
+        return sorted(wafer.sections.keys())[wafer.serialorder[slice_id - 1]]
 
 
 class Annotation(object):
@@ -1778,6 +1797,8 @@ def handle_key_local(keyEvent):
         wafer.start_global_mode()
     if keycode == KeyEvent.VK_H:
         IJ.showMessage("Help for local mode", HELP_MSG_LOCAL)
+    if keycode == KeyEvent.VK_G:
+        propagate_to_next_section()
     keyEvent.consume()
 
 
@@ -1956,6 +1977,57 @@ def handle_key_p_local():
     wafer.wafer_to_manager()
 
 
+def propagate_to_next_section():
+    """
+    In local mode, propagates all annotations of the current section
+    to the next serial section
+    """
+
+    manager = wafer.manager
+    manager.runCommand("Update")  # to update the current ROI
+    wafer.manager_to_wafer()
+
+    slice_id = wafer.image.getSlice()
+    section_id = sorted(wafer.sections.keys())[wafer.serialorder[slice_id - 1]]
+    if slice_id not in wafer.serialorder:
+        dlog("Cannot propagate to the next section: there is no next section")
+        return
+    next_section_id = sorted(wafer.sections.keys())[wafer.serialorder[slice_id]]
+
+    with wafer.set_mode(Mode.GLOBAL):
+        for annotation_type in AnnotationType.section_annotations():
+            if section_id not in getattr(wafer, annotation_type.name):
+                continue
+            if annotation_type is AnnotationType.ROI:
+                for roi_id, roi in wafer.rois[section_id].iteritems():
+                    propagated_points = GeometryCalculator.propagate_points(
+                        wafer.sections[section_id].points,
+                        roi.points,
+                        wafer.sections[next_section_id].points,
+                    )
+                    wafer.add_roi(
+                        GeometryCalculator.points_to_poly(propagated_points),
+                        (next_section_id, roi_id),
+                    )
+            else:
+                annotation_points = getattr(wafer, annotation_type.name)[
+                    section_id
+                ].points
+                propagated_points = GeometryCalculator.propagate_points(
+                    wafer.sections[section_id].points,
+                    annotation_points,
+                    wafer.sections[next_section_id].points,
+                )
+                wafer.add(
+                    annotation_type,
+                    GeometryCalculator.points_to_poly(propagated_points),
+                    next_section_id,
+                    template=section_id,
+                )
+    wafer.wafer_to_manager()
+    select_roi_by_name(str(wafer.sections[next_section_id]))
+
+
 def handle_key_a():
     drawn_roi = wafer.image.getRoi()
     if not drawn_roi:
@@ -1969,8 +2041,7 @@ def handle_key_a():
 
     name_suggestions = []
     if wafer.mode is Mode.LOCAL:
-        slice_id = wafer.image.getSlice()
-        section_id = sorted(wafer.sections.keys())[wafer.serialorder[slice_id - 1]]
+        section_id = wafer.get_section_id_from_current_local_position()
 
         if drawn_roi.size() == 2:
             name_suggestions.append("magnet-{:04}".format(section_id))
@@ -2236,10 +2307,10 @@ def delete_roi_by_index(index):
     wafer.manager.runCommand("Delete")
 
 
-def select_roi_by_name(roiName):
+def select_roi_by_name(roi_name):
     manager = get_roi_manager()
-    roiIndex = [roi.getName() for roi in manager.getRoisAsArray()].index(roiName)
-    manager.select(roiIndex)
+    roi_index = [roi.getName() for roi in manager.getRoisAsArray()].index(roi_name)
+    manager.select(roi_index)
 
 
 def set_roi_and_update_roi_manager(roi_index, select=True):
@@ -2429,7 +2500,7 @@ if __name__ == "__main__":
             "[a] creates/modifies an annotation",
             "[t] toggles to global mode",
             "[p] propagates the current annotation to sections defined in the dialog. Section and landmark annotations cannot be propagated",
-            "[g] validates your modification. It happens automatically when browsing through the sections with [d]/[f], [c]/[v], [e]/[r], or with the mouse wheel",
+            "[g] propagates all annotations of the current section to the next serial section and moves to the next serial section",
             "[q] quits. Everything will be saved",
             "[s] saves to file (happens already automatically when toggling [t] or quitting [q])",
             "[m] exports a summary montage",
