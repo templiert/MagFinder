@@ -958,15 +958,16 @@ class MagReorderer(object):
         if os.path.isfile(self.sift_order_path):
             dlog("Order already computed. Loading from file ...".center(100, "-"))
             with open(self.sift_order_path, "r") as f:
-                self.wafer.serialorder = [int(x) for x in f.readline().split(",")]
+                self.wafer.serial_order = [int(x) for x in f.readline().split(",")]
             return
         dlog("Computing order ...".center(100, "-"))
         pairwise_costs = self.get_cost_mat(matches_folder, metric=metric)
         order = self.wafer.tsp_solver.compute_tsp_order(pairwise_costs)
         with open(self.sift_order_path, "w") as f:
-            f.write(",".join([str(o) for o in order]))
+            f.write(",".join(str(o) for o in order))
         dlog("The order is: {}".format(order))
-        self.wafer.serialorder = order
+        sorted_section_keys = sorted(self.wafer.sections)
+        self.wafer.serial_order = [sorted_section_keys[o] for o in order]
 
     def align_sections(self):
         """Realigns the sections based on the transforms found during reordering"""
@@ -981,8 +982,7 @@ class MagReorderer(object):
         translation_center_high_res_fov = AffineTransform2D()
         translation_center_high_res_fov.translate(2 * [float(self.highres_w / 2)])
 
-        sorted_keys = sorted(self.wafer.sections)
-        k1 = sorted_keys[self.wafer.serialorder[0]]
+        k1 = self.wafer.serial_order[0]
 
         translation_centroid = AffineTransform2D()
         translation_centroid.translate(
@@ -1012,8 +1012,10 @@ class MagReorderer(object):
         cumulative_local_transform = AffineTransform2D()
 
         # build the stack, pair by pair
-        for o1, o2 in pairwise(self.wafer.serialorder):
-            k2 = sorted_keys[o2]
+        sorted_section_keys = sorted(self.sections)
+        for k1, k2 in pairwise(self.wafer.serial_order):
+            o1 = sorted_section_keys.index(k1)
+            o2 = sorted_section_keys.index(k2)
 
             # compute pair_local_transform:
             # it transforms the local view image of one section
@@ -1091,7 +1093,7 @@ class MagReorderer(object):
         ]
 
         img_stack = ordered_transformed_imgstack(
-            self.wafer.serialorder, affine_transforms, loaded_imgs, view_specs
+            self.wafer.serial_order, affine_transforms, loaded_imgs, view_specs
         )
         IL.show(img_stack)
 
@@ -1117,7 +1119,7 @@ class MagReorderer(object):
         ]
 
         img_stack = ordered_transformed_imgstack(
-            self.wafer.serialorder, affine_transforms, loaded_imgs, view_specs
+            self.wafer.serial_order, affine_transforms, loaded_imgs, view_specs
         )
         IL.show(img_stack)
 
