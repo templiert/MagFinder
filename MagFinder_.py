@@ -369,6 +369,8 @@ class Wafer(object):
                     )
         if not self.serialorder:
             self.serialorder = sorted(self.sections.keys())
+        if not self.stageorder:
+            self.stageorder = sorted(self.sections.keys())
         IJ.log(
             (
                 "File successfully read with \n{} sections \n{} rois \n{} focus"
@@ -574,6 +576,7 @@ class Wafer(object):
             config.add_section(order_name)
             order = getattr(self, order_name)
             if not order:
+                dlog("Debug: this case should not happen".center(100, "-"))
                 config.set(order_name, order_name, "[]")
             else:
                 config.set(order_name, order_name, ",".join([str(x) for x in order]))
