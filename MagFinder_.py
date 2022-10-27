@@ -1,6 +1,5 @@
 from __future__ import with_statement
 
-import copy
 import itertools
 import os
 import sys
@@ -29,7 +28,6 @@ from java.lang.reflect import Array
 from java.net import URL
 from java.nio.file import Files, Paths
 from java.util import HashSet
-from java.util.concurrent.atomic import AtomicInteger
 from java.util.zip import GZIPInputStream
 from mpicbg.models import Point, PointMatch, RigidModel2D
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
@@ -227,10 +225,10 @@ class Wafer(object):
         self.poly_transforms_inverse = {}
         """poly_tranforms_inverse: local to global"""
         # the serial order is the order in which the sections have been cut
-        self.serialorder = []
-        # the stageorder is the order that minimizes microscope stage travel
+        self.serial_order = []
+        # the stage_order is the order that minimizes microscope stage travel
         # to image one section after the other
-        self.stageorder = []
+        self.stage_order = []
         self.GC = GeometryCalculator
         self.file_to_wafer()
         IJ.setTool("polygon")
@@ -358,17 +356,17 @@ class Wafer(object):
                             if annotation_type is AnnotationType.ROI
                             else section_id,
                         )
-            elif header in ["serialorder", "stageorder"]:
+            elif header in ["serial_order", "stage_order"]:
                 if config.get(header, header) != "[]":
                     setattr(
                         self,
                         header,
                         [int(x) for x in config.get(header, header).split(",")],
                     )
-        if not self.serialorder:
-            self.serialorder = sorted(self.sections.keys())
-        if not self.stageorder:
-            self.stageorder = sorted(self.sections.keys())
+        if not self.serial_order:
+            self.serial_order = sorted(self.sections.keys())
+        if not self.stage_order:
+            self.stage_order = sorted(self.sections.keys())
         dlog(
             (
                 "File successfully read with \n{} sections \n{} rois \n{} focus"
@@ -418,7 +416,7 @@ class Wafer(object):
                     subroi.poly.setHandleSize(annotation_type.handle_size_global)
 
     def wafer_to_manager_local(self):
-        for id_order, section_id in enumerate(self.serialorder):
+        for id_order, section_id in enumerate(self.serial_order):
             for annotation_type in [
                 AnnotationType.SECTION,
                 AnnotationType.FOCUS,
@@ -568,7 +566,7 @@ class Wafer(object):
                         "angle",
                         str(((roi.angle - 90) % 360) - 180),
                     )
-        for order_name in ["serialorder", "stageorder"]:
+        for order_name in ["serial_order", "stage_order"]:
             config.add_section(order_name)
             order = getattr(self, order_name)
             if not order:
@@ -639,11 +637,11 @@ class Wafer(object):
                                 self.landmarks[id].centroid[1]
                                 if id in self.landmarks.keys()
                                 else "",
-                                self.stageorder[id]
-                                if len(self.stageorder) > id
+                                self.stage_order[id]
+                                if len(self.stage_order) > id
                                 else "",
-                                self.serialorder[id]
-                                if len(self.serialorder) > id
+                                self.serial_order[id]
+                                if len(self.serial_order) > id
                                 else "",
                             ]
                         ],
@@ -746,7 +744,7 @@ class Wafer(object):
                 display_params[0],
                 display_params[1],
             )
-            for o in self.serialorder
+            for o in self.serial_order
         ]
         self.img_local = Views.permute(
             Views.addDimension(Views.stack(imgs), 0, 0), 3, 2
@@ -772,14 +770,14 @@ class Wafer(object):
             section_id = annotation_id
         if (
             annotation_type is AnnotationType.SECTION
-            and annotation_id not in self.serialorder
+            and annotation_id not in self.serial_order
             # must use serial order, not self.sections
-            # because some workflows must handle serialorder changes themselves
+            # because some workflows must handle serial_order changes themselves
             #  (e.g. renumber sections)
         ):
             # appends to serial order only if new section
-            self.serialorder.append(section_id)
-            self.stageorder.append(section_id)
+            self.serial_order.append(section_id)
+            self.stage_order.append(section_id)
         if self.mode is Mode.GLOBAL:
             annotation = Annotation(
                 annotation_type,
@@ -903,8 +901,8 @@ class Wafer(object):
             section_id_manager = get_roi_index_by_name(str(self.sections[section_id]))
             delete_roi_by_index(section_id_manager)
             # update the orders
-            del self.serialorder[self.serialorder.index(section_id)]
-            del self.stageorder[self.stageorder.index(section_id)]
+            del self.serial_order[self.serial_order.index(section_id)]
+            del self.stage_order[self.stage_order.index(section_id)]
 
             del self.sections[section_id]
             del self.transforms[section_id]
@@ -1028,7 +1026,7 @@ class Wafer(object):
             distances[a][b] = distances[b][a] = center_points[a].distance(
                 center_points[b]
             )
-        self.stageorder = [
+        self.stage_order = [
             sorted_section_keys[o] for o in self.tsp_solver.compute_tsp_order(distances)
         ]
 
@@ -1063,10 +1061,10 @@ class Wafer(object):
             if new_key == key:
                 continue
             # update orders
-            id_serial = self.serialorder.index(key)
-            self.serialorder[id_serial] = new_key
-            id_stage = self.stageorder.index(key)
-            self.stageorder[id_stage] = new_key
+            id_serial = self.serial_order.index(key)
+            self.serial_order[id_serial] = new_key
+            id_stage = self.stage_order.index(key)
+            self.stage_order[id_stage] = new_key
             for annotation_type in [
                 AnnotationType.SECTION,
                 AnnotationType.FOCUS,
@@ -1786,7 +1784,7 @@ def handle_key_m_local():
         stroke_size = 3 * im_w / LOCAL_SIZE_STANDARD
 
     flattened_ims = []
-    for id_serial, section_id in enumerate(wafer.serialorder):
+    for id_serial, section_id in enumerate(wafer.serial_order):
         im_p = stack.getProcessor(id_serial + 1).duplicate()
         flattened = ImagePlus("flattened", im_p)
 
@@ -1920,9 +1918,9 @@ def propagate_to_next_section():
     wafer.manager_to_wafer()
 
     slice_id = wafer.image.getSlice()
-    section_id = wafer.serialorder[slice_id - 1]
+    section_id = wafer.serial_order[slice_id - 1]
     try:
-        next_section_id = wafer.serialorder[slice_id]
+        next_section_id = wafer.serial_order[slice_id]
     except IndexError:
         dlog("Cannot propagate to the next section: there is no next section")
         return
@@ -1973,7 +1971,7 @@ def handle_key_a():
 
     name_suggestions = []
     if wafer.mode is Mode.LOCAL:
-        section_id = wafer.serialorder[wafer.image.getSlice() - 1]
+        section_id = wafer.serial_order[wafer.image.getSlice() - 1]
         if drawn_roi.size() == 2:
             name_suggestions.append("magnet-{:04}".format(section_id))
         else:
@@ -2403,12 +2401,12 @@ if __name__ == "__main__":
             (
                 "[o]   (letter o) computes the section order that minimizes the travel of the microscope stage"
                 " (not the same as the serial sectioning order of the sections)."
-                ' Saves the order in the .magc file in the field "stageorder"'
+                ' Saves the order in the .magc file in the field "stage_order"'
             ),
             (
                 "[j] computes the serial order based on the roi defined in the first section."
                 " Updates the section positions."
-                'Stores the serial order in the .magc file in the field "serialorder".'
+                'Stores the serial order in the .magc file in the field "serial_order".'
                 " We recommend to save beforehand a copy of the .magc file outside of the directory"
             ),
         )
@@ -2438,7 +2436,7 @@ if __name__ == "__main__":
             (
                 "[o]   (letter o) computes the section order that minimizes the travel of the microscope stage"
                 " (not the same as the serial sectioning order of the sections)."
-                ' Saves the order in the .magc file in the field "stageorder"'
+                ' Saves the order in the .magc file in the field "stage_order"'
             ),
         )
         + "<br><br><br></html>"
