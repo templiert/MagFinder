@@ -63,7 +63,7 @@ ACCEPTED_IMAGE_FORMATS = (
 
 def dlog(x):
     """Double log to print and dlog"""
-    dlog(x)
+    IJ.log(x)
     print(x)
 
 
