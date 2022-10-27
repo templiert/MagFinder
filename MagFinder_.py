@@ -64,8 +64,8 @@ ACCEPTED_IMAGE_FORMATS = (
 
 
 def dlog(x):
-    """Double log to print and IJ.log"""
-    IJ.log(x)
+    """Double log to print and dlog"""
+    dlog(x)
     print(x)
 
 
@@ -152,7 +152,7 @@ def transfer_wafer(wafer_1, wafer_2):
     wafer_1 = Wafer(path_1)
     wafer_2 = Wafer(path_2) ...
     """
-    IJ.log(
+    dlog(
         ("Transferring annotations from {} to {} ...".format(wafer_1, wafer_2)).center(
             100, "-"
         )
@@ -196,7 +196,7 @@ def transfer_wafer(wafer_1, wafer_2):
                 )
     wafer_2.wafer_to_manager()
     wafer_2.save()
-    IJ.log(
+    dlog(
         (
             "Completed transfer of annotations from {} to {} ...".format(
                 wafer_1, wafer_2
@@ -320,7 +320,7 @@ class Wafer(object):
             if filename.endswith(".magc")
         ]
         if not magc_paths:
-            IJ.log("No .magc file found. Creating an empty one")
+            dlog("No .magc file found. Creating an empty one")
             wafer_name_from_user = get_name(
                 "Please name this substrate",
                 default_name="default_substrate",
@@ -341,9 +341,7 @@ class Wafer(object):
         config = ConfigParser.ConfigParser()
         with open(self.magc_path, "rb") as configfile:
             config.readfp(configfile)
-        IJ.log(
-            "Duration file_to_wafer 1: {}".format((System.nanoTime() - start) * 1e-9)
-        )
+        dlog("Duration file_to_wafer 1: {}".format((System.nanoTime() - start) * 1e-9))
         for header in config.sections():
             if "." in header:
                 annotation_type, section_id, annotation_id = type_id(
@@ -371,7 +369,7 @@ class Wafer(object):
             self.serialorder = sorted(self.sections.keys())
         if not self.stageorder:
             self.stageorder = sorted(self.sections.keys())
-        IJ.log(
+        dlog(
             (
                 "File successfully read with \n{} sections \n{} rois \n{} focus"
                 + "\n{} magnets \n{} landmarks"
@@ -383,7 +381,7 @@ class Wafer(object):
                 len(self.landmarks),
             )
         )
-        IJ.log("Duration file_to_wafer: {}".format((System.nanoTime() - start) * 1e-9))
+        dlog("Duration file_to_wafer: {}".format((System.nanoTime() - start) * 1e-9))
 
     def wafer_to_manager(self):
         """Draws all rois from the wafer instance into the manager"""
@@ -393,7 +391,7 @@ class Wafer(object):
             self.wafer_to_manager_global()
         else:
             self.wafer_to_manager_local()
-        IJ.log(
+        dlog(
             "Duration wafer_to_manager: {:.2f} in mode {}".format(
                 (System.nanoTime() - start) * 1e-9, self.mode
             )
@@ -481,7 +479,7 @@ class Wafer(object):
             )
         self.clear_transforms()
         self.compute_transforms()
-        IJ.log(
+        dlog(
             "Duration manager_to_wafer: {:.2f}".format(
                 (System.nanoTime() - start) * 1e-9
             )
@@ -490,7 +488,7 @@ class Wafer(object):
     def save(self):
         """Saves the wafer annotations to the .magc file"""
         start = System.nanoTime()
-        IJ.log("Saving ...")
+        dlog("Saving ...")
         self.manager_to_wafer()
         config = ConfigParser.ConfigParser()
         for annotation_type in AnnotationType.all():
@@ -581,9 +579,9 @@ class Wafer(object):
 
         with open(self.magc_path, "w") as configfile:
             config.write(configfile)
-        IJ.log("Saved to {}".format(self.magc_path))
+        dlog("Saved to {}".format(self.magc_path))
         self.save_csv()
-        IJ.log("Duration save: {:.2f}".format((System.nanoTime() - start) * 1e-9))
+        dlog("Duration save: {:.2f}".format((System.nanoTime() - start) * 1e-9))
 
     def save_csv(self):
         # TODO currently broken with multirois
@@ -659,8 +657,8 @@ class Wafer(object):
                         )
                     )
                 f.write("\n")
-        IJ.log("Annotations saved to {}".format(csv_path))
-        IJ.log("Duration save_csv: {:.2f}".format((System.nanoTime() - start) * 1e-9))
+        dlog("Annotations saved to {}".format(csv_path))
+        dlog("Duration save_csv: {:.2f}".format((System.nanoTime() - start) * 1e-9))
 
     def close_mode(self):
         """
@@ -680,7 +678,7 @@ class Wafer(object):
     def start_local_mode(self):
         """Starts local display mode"""
         start = System.nanoTime()
-        IJ.log("Starting local mode ...")
+        dlog("Starting local mode ...")
         self.mode = Mode.LOCAL
         self.compute_transforms()
         self.create_local_stack()
@@ -690,7 +688,7 @@ class Wafer(object):
         self.manager.runCommand("Show None")
         set_roi_and_update_roi_manager(0)  # select first ROI
         self.arrange_windows()
-        IJ.log(
+        dlog(
             "Duration start_local_mode: {:.2f}".format(
                 (System.nanoTime() - start) * 1e-9
             )
@@ -722,7 +720,7 @@ class Wafer(object):
             self.poly_transforms_inverse[section_id] = self.poly_transforms[
                 section_id
             ].inverse()
-        IJ.log(
+        dlog(
             "Duration compute_transforms: {:.2f}".format(
                 (System.nanoTime() - start) * 1e-9
             )
@@ -756,7 +754,7 @@ class Wafer(object):
         IL.show(self.img)
         self.image_local = IJ.getImage()
 
-        IJ.log(
+        dlog(
             "Duration create_local_stack: {:.2f}".format(
                 (System.nanoTime() - start) * 1e-9
             )
@@ -961,7 +959,7 @@ class Wafer(object):
         # self.manager.runCommand("Show All with labels")
         IJ.run("Labels...", "color=white font=10 use draw")
         self.manager.runCommand("Show All without labels")
-        IJ.log(
+        dlog(
             "Duration start_global_mode: {:.2f}".format(
                 (System.nanoTime() - start) * 1e-9
             )
@@ -1058,9 +1056,7 @@ class Wafer(object):
         "0,1,4,5,7 -> 0,1,2,3,4"
         """
         if self.mode is Mode.LOCAL:
-            IJ.log(
-                "Closing local mode. Section renumbering will be done in global mode"
-            )
+            dlog("Closing local mode. Section renumbering will be done in global mode")
             self.close_mode()
             self.start_global_mode()
         for new_key, key in enumerate(sorted(self.sections)):
@@ -1089,7 +1085,7 @@ class Wafer(object):
         self.clear_transforms()
         self.compute_transforms()
         self.wafer_to_manager()
-        IJ.log("{} sections have been renumbered".format(len(self)))
+        dlog("{} sections have been renumbered".format(len(self)))
 
     def suggest_roi_ids(self, section_id):
         if not self.rois:
@@ -1375,7 +1371,7 @@ class TSPSolver(object):
                             URL(cygwindll_url), File(cygwindll_path)
                         )
                     except (Exception, java_exception) as e:
-                        IJ.log("Failed to download cygwin1.dll due to {}".format(e))
+                        dlog("Failed to download cygwin1.dll due to {}".format(e))
             # download concorde and linkern solvers
             for path, url in zip(
                 [concorde_path, linkern_path], [concorde_url, linkern_url]
@@ -1395,7 +1391,7 @@ class TSPSolver(object):
     @staticmethod
     def download_unzip(url, target_path):
         # download, unzip, clean
-        IJ.log("Downloading TSP solver from " + str(url))
+        dlog("Downloading TSP solver from " + str(url))
         gz_path = os.path.join(IJ.getDirectory("plugins"), "temp.gz")
         try:
             FileUtils.copyURLToFile(URL(url), File(gz_path))
@@ -1404,7 +1400,7 @@ class TSPSolver(object):
             gis.close()
             os.remove(gz_path)
         except (Exception, java_exception) as e:
-            IJ.log("Failed to download from " + str(url) + " due to " + str(e))
+            dlog("Failed to download from " + str(url) + " due to " + str(e))
 
     def order_from_mat(self, mat, root_folder, solver_path, solution_name=""):
         tsplib_path = os.path.join(root_folder, "TSPMat.tsp")
@@ -1418,12 +1414,12 @@ class TSPSolver(object):
         # command = (
         #     '"' + solver_path + '" -o "' + solution_path + '" "' + tsplib_path + '"'
         # )
-        # IJ.log('TSP solving command ' + str(command))
+        # dlog('TSP solving command ' + str(command))
         Runtime.getRuntime().exec(command)
 
         while not os.path.isfile(solution_path):
             time.sleep(1)
-            IJ.log(
+            dlog(
                 "Computing TSP solution with the {} solver...".format(
                     os.path.basename(solver_path).replace(".exe", "")
                 )
@@ -1448,7 +1444,7 @@ class TSPSolver(object):
                 sum([mat[o1][o2] for o1, o2 in pairwise(order)]),
             ),
         ):
-            IJ.log(
+            dlog(
                 "The total cost of the {}optimized order is {} (a.u.)".format(
                     name, intr(cost)
                 )
@@ -1498,16 +1494,16 @@ class TSPSolver(object):
         else:
             solver_path = self.linkern_path
         if not solver_path:
-            IJ.log(
+            dlog(
                 "Could not compute the stage-movement-minimizing order"
                 " because the solver or cygwin1.dll are missing"
             )
             return
         try:
             order = self.order_from_mat(pairwise_costs, self.root, solver_path)
-            IJ.log("The optimal order is: {}".format(order))
+            dlog("The optimal order is: {}".format(order))
         except (Exception, java_exception) as e:
-            IJ.log("The order could not be computed: {}".format(e))
+            dlog("The order could not be computed: {}".format(e))
             return []
         return order
 
@@ -1761,7 +1757,7 @@ def handle_key_m_global():
     flattened = wafer.image.flatten()
     flattened_path = os.path.join(wafer.root, "overview_global.jpg")
     IJ.save(flattened, flattened_path)
-    IJ.log("Flattened global image saved to {}".format(flattened_path))
+    dlog("Flattened global image saved to {}".format(flattened_path))
     flattened.close()
     wafer.start_global_mode()
 
@@ -1823,7 +1819,7 @@ def handle_key_m_local():
     flattened_path = os.path.join(wafer.root, "overview_local.jpg")
     IJ.save(montage, flattened_path)
     del flattened_ims
-    IJ.log("Flattened local image saved to {}".format(flattened_path))
+    dlog("Flattened local image saved to {}".format(flattened_path))
 
 
 def handle_key_x_local():
@@ -1885,7 +1881,7 @@ def handle_key_p_local():
         return
     user_range = gd.getNextString()
     input_indexes = get_indexes_from_user_string(user_range)
-    IJ.log("User input indexes from Propagation Dialog: {}".format(input_indexes))
+    dlog("User input indexes from Propagation Dialog: {}".format(input_indexes))
     valid_input_indexes = [i for i in input_indexes if i in wafer.sections]
     if not valid_input_indexes:
         return
@@ -2042,7 +2038,7 @@ def handle_key_a():
         wafer.manager.select(get_roi_index_by_name(annotation_name))
     else:
         roi_manager_scroll_bottom()
-    IJ.log("Annotation {} added".format(annotation_name))
+    dlog("Annotation {} added".format(annotation_name))
 
 
 def move_fov(a):
@@ -2153,7 +2149,7 @@ def annotation_name_validation_dialog(name_suggestions):
         0,
     )
     if not checkbox:
-        IJ.log("No selection made: the section was not added")
+        dlog("No selection made: the section was not added")
         return None
     if checkbox is None:
         return None
