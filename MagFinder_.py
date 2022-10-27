@@ -368,7 +368,7 @@ class Wafer(object):
                         [int(x) for x in config.get(header, header).split(",")],
                     )
         if not self.serialorder:
-            self.serialorder = range(len(self.sections))
+            self.serialorder = sorted(self.sections.keys())
         IJ.log(
             (
                 "File successfully read with \n{} sections \n{} rois \n{} focus"
@@ -418,10 +418,7 @@ class Wafer(object):
                     subroi.poly.setHandleSize(annotation_type.handle_size_global)
 
     def wafer_to_manager_local(self):
-        sorted_keys = sorted(self.sections)
-        # sections are ordered in the local stack
-        for id_o, o in enumerate(self.serialorder):
-            section_id = sorted_keys[o]
+        for id_order, section_id in enumerate(self.serialorder):
             for annotation_type in [
                 AnnotationType.SECTION,
                 AnnotationType.FOCUS,
@@ -435,7 +432,7 @@ class Wafer(object):
                     local_poly.setName(str(annotation))
                     local_poly.setStrokeColor(annotation_type.color)
                     local_poly.setImage(self.image)
-                    local_poly.setPosition(0, id_o + 1, 0)
+                    local_poly.setPosition(0, id_order + 1, 0)
                     local_poly.setHandleSize(annotation_type.handle_size_local)
                     self.manager.addRoi(local_poly)
             if section_id not in self.rois:
@@ -447,7 +444,7 @@ class Wafer(object):
                 local_poly.setName(str(subroi))
                 local_poly.setStrokeColor(subroi.type_.color)
                 local_poly.setImage(self.image)
-                local_poly.setPosition(0, id_o + 1, 0)
+                local_poly.setPosition(0, id_order + 1, 0)
                 local_poly.setHandleSize(subroi.type_.handle_size_local)
                 self.manager.addRoi(local_poly)
 
@@ -483,7 +480,7 @@ class Wafer(object):
             )
         self.clear_transforms()
         self.compute_transforms()
-        self.serialorder = serial_order  # needed here because serial order is changed when adding a section
+        self.serialorder = serial_order  # needed here because serial order is changed when adding a section # TODO <- why?
         IJ.log(
             "Duration manager_to_wafer: {:.2f}".format(
                 (System.nanoTime() - start) * 1e-9
@@ -737,7 +734,6 @@ class Wafer(object):
             [-intr(0.5 * v) for v in self.local_display_size],
             [intr(0.5 * v) for v in self.local_display_size],
         )
-        sorted_section_keys = sorted(self.sections)
         imgs = [
             Views.interval(
                 RV.transform(
@@ -746,7 +742,7 @@ class Wafer(object):
                         # NLinearInterpolatorFactory()
                         NearestNeighborInterpolatorFactory(),
                     ),
-                    self.transforms[sorted_section_keys[o]],
+                    self.transforms[o],
                 ),
                 display_params[0],
                 display_params[1],
@@ -766,7 +762,11 @@ class Wafer(object):
         )
 
     def add(self, annotation_type, poly, annotation_id):
-        """Adds an annotation to the wafer and returns it"""
+        """
+        Adds an annotation to the wafer and returns it
+        annotation_id is an int except for rois: (section_id, roi_id)
+        """
+
         if annotation_type is AnnotationType.ROI:
             section_id = annotation_id[0]
         else:
@@ -776,7 +776,7 @@ class Wafer(object):
             and annotation_id not in self.sections
         ):
             # appends to serial order only if new section
-            self.serialorder.append(len(self))
+            self.serialorder.append(section_id)
         if self.mode is Mode.GLOBAL:
             annotation = Annotation(
                 annotation_type,
@@ -899,15 +899,9 @@ class Wafer(object):
             # delete section in manager
             section_id_manager = get_roi_index_by_name(str(self.sections[section_id]))
             delete_roi_by_index(section_id_manager)
-            # rearrange serial order
-            # 1. delete the serialorder entry of that section
-            del self.serialorder[sorted(self.sections.keys()).index(section_id)]
-            # 2. decrements the serialorder id of the sections with an id greater than
-            # the one that was deleted
-            self.serialorder = [
-                o - 1 if (o > sorted(self.sections.keys()).index(section_id)) else o
-                for o in self.serialorder
-            ]
+            # update the orders
+            del self.serialorder[self.serialorder.index(section_id)]
+            del self.stageorder[self.stageorder.index(section_id)]
 
             del self.sections[section_id]
             del self.transforms[section_id]
@@ -1057,7 +1051,6 @@ class Wafer(object):
         """Renumbering the sections to have consecutive numbers without gaps:
         "0,1,4,5,7 -> 0,1,2,3,4"
         """
-        current_serial_order = copy.deepcopy(self.serialorder)
         if self.mode is Mode.LOCAL:
             IJ.log(
                 "Closing local mode. Section renumbering will be done in global mode"
@@ -1067,6 +1060,11 @@ class Wafer(object):
         for new_key, key in enumerate(sorted(self.sections)):
             if new_key == key:
                 continue
+            # update orders
+            id_serial = self.serialorder.index(key)
+            self.serialorder[id_serial] = new_key
+            id_stage = self.serialorder.index(key)
+            self.serialorder[id_stage] = new_key
             for annotation_type in [
                 AnnotationType.SECTION,
                 AnnotationType.FOCUS,
@@ -1085,7 +1083,6 @@ class Wafer(object):
         self.clear_transforms()
         self.compute_transforms()
         self.wafer_to_manager()
-        self.serialorder = current_serial_order
         IJ.log("{} sections have been renumbered".format(len(self)))
 
     def suggest_roi_ids(self, section_id):
@@ -1100,14 +1097,6 @@ class Wafer(object):
                 set(suggest_ids(section_rois.keys())).union(set(section_rois))
             )
         ]
-
-    def get_section_id_from_local_position(self):
-        """
-        While the local stack is open, returns the section_id corresponding
-        to the current annotation being displayed
-        """
-        slice_id = wafer.image.getSlice()
-        return sorted(wafer.sections.keys())[wafer.serialorder[slice_id - 1]]
 
 
 class Annotation(object):
@@ -1795,8 +1784,8 @@ def handle_key_m_local():
         stroke_size = 3 * im_w / LOCAL_SIZE_STANDARD
 
     flattened_ims = []
-    for id, section_id in enumerate(sorted(wafer.sections.keys())):
-        im_p = stack.getProcessor(wafer.serialorder.index(id) + 1).duplicate()
+    for id_serial, section_id in enumerate(wafer.serialorder):
+        im_p = stack.getProcessor(id_serial + 1).duplicate()
         flattened = ImagePlus("flattened", im_p)
 
         for roi in wafer.manager.iterator():
@@ -1929,11 +1918,12 @@ def propagate_to_next_section():
     wafer.manager_to_wafer()
 
     slice_id = wafer.image.getSlice()
-    section_id = sorted(wafer.sections.keys())[wafer.serialorder[slice_id - 1]]
-    if slice_id not in wafer.serialorder:
+    section_id = wafer.serialorder[slice_id - 1]
+    try:
+        next_section_id = wafer.serialorder[slice_id]
+    except IndexError:
         dlog("Cannot propagate to the next section: there is no next section")
         return
-    next_section_id = sorted(wafer.sections.keys())[wafer.serialorder[slice_id]]
 
     with wafer.set_mode(Mode.GLOBAL):
         for annotation_type in AnnotationType.section_annotations():
@@ -1981,8 +1971,7 @@ def handle_key_a():
 
     name_suggestions = []
     if wafer.mode is Mode.LOCAL:
-        section_id = wafer.get_section_id_from_local_position()
-
+        section_id = wafer.serialorder[wafer.image.getSlice() - 1]
         if drawn_roi.size() == 2:
             name_suggestions.append("magnet-{:04}".format(section_id))
         else:
