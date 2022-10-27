@@ -1,5 +1,14 @@
 """
 MagReorderer companion of MagFinder
+
+Notes: 
+    key indexing
+        the indexing of sections can have gaps: keys = [0,1,3,5,6]
+    continuous indexing
+        it is easier to work with continuous indexing
+        for ordering computations [0,1,3,5,6] -> [0,1,2,3,4]
+    key       -> continuous happens when extracting high res rois: "roi_{:04}.tif".format(id_enumerate),
+    continous -> key        happens when assigning the wafer.serial_order: self.wafer.serial_order = [sorted_section_keys[o] for o in order]
 """
 import importlib
 import io.scif.img.ImgOpener
@@ -955,10 +964,13 @@ class MagReorderer(object):
 
     def compute_order(self, matches_folder, metric=Metric.INLIER_NUMBER):
         """Computes and saves the order given the path of the stored matches"""
+        sorted_section_keys = sorted(self.wafer.sections)
         if os.path.isfile(self.sift_order_path):
             dlog("Order already computed. Loading from file ...".center(100, "-"))
             with open(self.sift_order_path, "r") as f:
-                self.wafer.serial_order = [int(x) for x in f.readline().split(",")]
+                self.wafer.serial_order = [
+                    sorted_section_keys(int(x)) for x in f.readline().split(",")
+                ]
             return
         dlog("Computing order ...".center(100, "-"))
         pairwise_costs = self.get_cost_mat(matches_folder, metric=metric)
@@ -966,7 +978,6 @@ class MagReorderer(object):
         with open(self.sift_order_path, "w") as f:
             f.write(",".join(str(o) for o in order))
         dlog("The order is: {}".format(order))
-        sorted_section_keys = sorted(self.wafer.sections)
         self.wafer.serial_order = [sorted_section_keys[o] for o in order]
 
     def align_sections(self):
@@ -1093,7 +1104,11 @@ class MagReorderer(object):
         ]
 
         img_stack = ordered_transformed_imgstack(
-            self.wafer.serial_order, affine_transforms, loaded_imgs, view_specs
+            self.wafer.serial_order,
+            affine_transforms,
+            loaded_imgs,
+            view_specs,
+            sorted(self.wafer.sections),
         )
         IL.show(img_stack)
 
@@ -1119,7 +1134,11 @@ class MagReorderer(object):
         ]
 
         img_stack = ordered_transformed_imgstack(
-            self.wafer.serial_order, affine_transforms, loaded_imgs, view_specs
+            self.wafer.serial_order,
+            affine_transforms,
+            loaded_imgs,
+            view_specs,
+            sorted(self.wafer.sections),
         )
         IL.show(img_stack)
 
@@ -1238,10 +1257,15 @@ def update_stack(a, b):
     # IJ.run('Orthogonal Views')
 
 
-def ordered_transformed_imgstack(order, affine_transforms, loaded_imgs, view_specs):
+def ordered_transformed_imgstack(
+    order, affine_transforms, loaded_imgs, view_specs, sorted_section_keys
+):
     imgs = [Views.interval(loaded_imgs[order[0]], *view_specs)]
     transform = AffineTransform2D()
-    for i, j in pairwise(order):
+    # for i, j in pairwise(order):
+    for k1, k2 in pairwise(order):
+        i = sorted_section_keys.index(k1)
+        j = sorted_section_keys.index(k2)
         if (i, j) in affine_transforms:
             current_transform = affine_transforms[(i, j)].copy()
         else:
