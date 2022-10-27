@@ -376,7 +376,7 @@ class Wafer(object):
                 "File successfully read with \n{} sections \n{} rois \n{} focus"
                 + "\n{} magnets \n{} landmarks"
             ).format(
-                len(self.sections),
+                len(self),
                 len(self.rois),
                 len(self.focus),
                 len(self.magnets),
@@ -469,7 +469,6 @@ class Wafer(object):
         Typically called after the user interacted with the UI
         """
         start = System.nanoTime()
-        serial_order = copy.deepcopy(self.serialorder)
         self.clear_annotations()
         for roi in self.manager.iterator():
             annotation_type, section_id, annotation_id = type_id(roi.getName())
@@ -482,7 +481,6 @@ class Wafer(object):
             )
         self.clear_transforms()
         self.compute_transforms()
-        self.serialorder = serial_order  # needed here because serial order is changed when adding a section # TODO <- why?
         IJ.log(
             "Duration manager_to_wafer: {:.2f}".format(
                 (System.nanoTime() - start) * 1e-9
@@ -654,7 +652,7 @@ class Wafer(object):
                     )
                 )
                 # unusual case: if there are more landmarks than sections
-                for i in range(len(self.sections), len(self.landmarks)):
+                for i in range(len(self), len(self.landmarks)):
                     f.write(
                         ",,,,,,,,,{},{},,".format(
                             self.landmarks[i].centroid[0], self.landmarks[i].centroid[1]
@@ -776,10 +774,14 @@ class Wafer(object):
             section_id = annotation_id
         if (
             annotation_type is AnnotationType.SECTION
-            and annotation_id not in self.sections
+            and annotation_id not in self.serialorder
+            # must use serial order, not self.sections
+            # because some workflows must handle serialorder changes themselves
+            #  (e.g. renumber sections)
         ):
             # appends to serial order only if new section
             self.serialorder.append(section_id)
+            self.stageorder.append(section_id)
         if self.mode is Mode.GLOBAL:
             annotation = Annotation(
                 annotation_type,
@@ -984,7 +986,7 @@ class Wafer(object):
         tissue_magnet_distance = 0
 
         section_extent = 0
-        for section in self.sections.values()[: min(5, len(self.sections))]:
+        for section in self.sections.values()[: min(5, len(self))]:
             section_extent = max(
                 section_extent, self.GC.longest_diagonal(section.points)
             )
@@ -1017,19 +1019,20 @@ class Wafer(object):
 
     def compute_stage_order(self):
         """Computes the stage order by solving a TSP on the section centroids"""
+        sorted_section_keys = sorted(self.sections)
         center_points = [
             pFloat(*wafer.sections[section_key].centroid)
-            for section_key in sorted(self.sections)
+            for section_key in sorted(sorted_section_keys)
         ]
         # fill distance matrix
-        distances = TSPSolver.init_mat(len(self.sections), initValue=999999)
-        for a, b in itertools.combinations_with_replacement(
-            range(len(self.sections)), 2
-        ):
+        distances = TSPSolver.init_mat(len(self), initValue=999999)
+        for a, b in itertools.combinations_with_replacement(range(len(self)), 2):
             distances[a][b] = distances[b][a] = center_points[a].distance(
                 center_points[b]
             )
-        self.stageorder = self.tsp_solver.compute_tsp_order(distances)
+        self.stageorder = [
+            sorted_section_keys[o] for o in self.tsp_solver.compute_tsp_order(distances)
+        ]
 
     def update_section(self, section_id, transform, ref_section_points, ref_roi_points):
         """
@@ -1066,8 +1069,8 @@ class Wafer(object):
             # update orders
             id_serial = self.serialorder.index(key)
             self.serialorder[id_serial] = new_key
-            id_stage = self.serialorder.index(key)
-            self.serialorder[id_stage] = new_key
+            id_stage = self.stageorder.index(key)
+            self.stageorder[id_stage] = new_key
             for annotation_type in [
                 AnnotationType.SECTION,
                 AnnotationType.FOCUS,
@@ -1079,7 +1082,7 @@ class Wafer(object):
                     del getattr(self, annotation_type.name)[key]
             if not self.rois:  # TODO needed?
                 continue
-            for subroi_id, subroi in self.rois[key]:
+            for subroi_id, subroi in self.rois[key].iteritems():
                 self.add_roi(subroi.poly, (new_key, subroi_id))
                 del self.rois[key][subroi_id]
 
