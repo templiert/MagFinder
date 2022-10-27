@@ -884,9 +884,18 @@ class Wafer(object):
             self.image.killRoi()
             # delete linked annotations in manager and in wafer
             for linked_annotation in linked_annotations:
+                # delete in roimanager
                 index = get_roi_index_by_name(str(linked_annotation))
                 delete_roi_by_index(index)
-                del getattr(self, linked_annotation.type_.name)[section_id]
+
+                # delete in wafer
+                annotation_type, section_id, annotation_id = type_id(
+                    str(linked_annotation)
+                )
+                if annotation_type is AnnotationType.ROI:
+                    del self.rois[section_id][annotation_id]
+                else:
+                    del getattr(self, linked_annotation.type_.name)[section_id]
             # delete section in manager
             section_id_manager = get_roi_index_by_name(str(self.sections[section_id]))
             delete_roi_by_index(section_id_manager)
