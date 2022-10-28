@@ -969,7 +969,7 @@ class MagReorderer(object):
             dlog("Order already computed. Loading from file ...".center(100, "-"))
             with open(self.sift_order_path, "r") as f:
                 self.wafer.serial_order = [
-                    sorted_section_keys(int(x)) for x in f.readline().split(",")
+                    sorted_section_keys[int(x)] for x in f.readline().split(",")
                 ]
             return
         dlog("Computing order ...".center(100, "-"))
@@ -1023,7 +1023,7 @@ class MagReorderer(object):
         cumulative_local_transform = AffineTransform2D()
 
         # build the stack, pair by pair
-        sorted_section_keys = sorted(self.sections)
+        sorted_section_keys = sorted(self.wafer.sections)
         for k1, k2 in pairwise(self.wafer.serial_order):
             o1 = sorted_section_keys.index(k1)
             o2 = sorted_section_keys.index(k2)
