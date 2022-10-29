@@ -47,7 +47,7 @@ import MagReorderer
 SIZE_HANDLE = 15
 LOCAL_SIZE_STANDARD = 400  # for local summary
 # DISPLAY_FACTOR = 2.5
-DISPLAY_FACTOR = 2
+DISPLAY_FACTOR = 1.2
 MSG_DRAWN_ROI_MISSING = (
     "Please draw something before pressing [a]."
     + "\nAfter closing this message you can press [h] for help."
@@ -106,7 +106,7 @@ class AnnotationTypeDef(object):
 
 class AnnotationType(object):
     SECTION = AnnotationTypeDef("sections", "section", Color.blue, 15, 15)
-    ROI = AnnotationTypeDef("rois", "roi", Color.yellow, 15, 15)
+    ROI = AnnotationTypeDef("rois", "roi", Color.yellow, 15, 2)
     FOCUS = AnnotationTypeDef("focus", "focus", Color.green, 15, 15)
     MAGNET = AnnotationTypeDef("magnets", "magnet", Color.green, 15, 15)
     LANDMARK = AnnotationTypeDef("landmarks", "landmark", Color.yellow, 15, 15)
@@ -839,7 +839,8 @@ class Wafer(object):
                 self.image.killRoi()
                 if annotation_type is AnnotationType.ROI:
                     del self.rois[section_id][annotation_id]
-                del getattr(self, annotation_type.name)[annotation_id]
+                else:
+                    del getattr(self, annotation_type.name)[annotation_id]
                 # select the section
                 self.manager.select(
                     get_roi_index_by_name(str(self.sections[section_id]))

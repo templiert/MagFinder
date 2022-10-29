@@ -30,12 +30,8 @@ from ij.gui import GenericDialog, PointRoi, PolygonRoi, Roi
 from java.awt import Polygon, Rectangle
 from java.awt.event import KeyAdapter, KeyEvent
 from java.awt.geom import AffineTransform
-from java.io import (
-    FileInputStream,
-    FileOutputStream,
-    ObjectInputStream,
-    ObjectOutputStream,
-)
+from java.io import (FileInputStream, FileOutputStream, ObjectInputStream,
+                     ObjectOutputStream)
 from java.lang import Exception as java_exception
 from java.lang import Math, Runtime
 from java.util import ArrayList, HashSet
@@ -45,14 +41,13 @@ from loci.formats import ImageReader, MetadataTools
 from mpicbg.ij import SIFT, FeatureTransform
 from mpicbg.ij.plugin import NormalizeLocalContrast
 from mpicbg.imagefeatures import FloatArray2DSIFT
-from mpicbg.models import AffineModel2D, NotEnoughDataPointsException, PointMatch
+from mpicbg.models import (AffineModel2D, NotEnoughDataPointsException,
+                           PointMatch, RigidModel2D)
 from net.imglib2.converter import RealUnsignedByteConverter
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
 from net.imglib2.img.display.imagej import ImageJVirtualStackUnsignedByte
 from net.imglib2.interpolation.randomaccess import (
-    NearestNeighborInterpolatorFactory,
-    NLinearInterpolatorFactory,
-)
+    NearestNeighborInterpolatorFactory, NLinearInterpolatorFactory)
 from net.imglib2.realtransform import AffineTransform2D
 from net.imglib2.realtransform import RealViews as RV
 from net.imglib2.view import Views
@@ -353,7 +348,8 @@ def get_SIFT_similarity(
     candidates = ArrayList()
     FeatureTransform.matchFeatures(features_1, features_2, candidates, 0.92)
     inliers = ArrayList()
-    model = AffineModel2D()  # or RigidModel2D()
+    #model = AffineModel2D()  # or RigidModel2D()
+    model = RigidModel2D()
     try:
         model_found = model.filterRansac(
             candidates,  # candidates
