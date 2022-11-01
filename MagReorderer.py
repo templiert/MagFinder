@@ -30,8 +30,12 @@ from ij.gui import GenericDialog, PointRoi, PolygonRoi, Roi
 from java.awt import Polygon, Rectangle
 from java.awt.event import KeyAdapter, KeyEvent
 from java.awt.geom import AffineTransform
-from java.io import (FileInputStream, FileOutputStream, ObjectInputStream,
-                     ObjectOutputStream)
+from java.io import (
+    FileInputStream,
+    FileOutputStream,
+    ObjectInputStream,
+    ObjectOutputStream,
+)
 from java.lang import Exception as java_exception
 from java.lang import Math, Runtime
 from java.util import ArrayList, HashSet
@@ -41,13 +45,19 @@ from loci.formats import ImageReader, MetadataTools
 from mpicbg.ij import SIFT, FeatureTransform
 from mpicbg.ij.plugin import NormalizeLocalContrast
 from mpicbg.imagefeatures import FloatArray2DSIFT
-from mpicbg.models import (AffineModel2D, NotEnoughDataPointsException,
-                           PointMatch, RigidModel2D)
+from mpicbg.models import (
+    AffineModel2D,
+    NotEnoughDataPointsException,
+    PointMatch,
+    RigidModel2D,
+)
 from net.imglib2.converter import RealUnsignedByteConverter
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
 from net.imglib2.img.display.imagej import ImageJVirtualStackUnsignedByte
 from net.imglib2.interpolation.randomaccess import (
-    NearestNeighborInterpolatorFactory, NLinearInterpolatorFactory)
+    NearestNeighborInterpolatorFactory,
+    NLinearInterpolatorFactory,
+)
 from net.imglib2.realtransform import AffineTransform2D
 from net.imglib2.realtransform import RealViews as RV
 from net.imglib2.view import Views
@@ -263,6 +273,7 @@ def get_SIFT_similarity_parallel(
     section_features,
     pairwise_costs,
     affine_transforms,
+    transform_type,
     translation_threshold,
     highres_w,
 ):
@@ -282,6 +293,7 @@ def get_SIFT_similarity_parallel(
             section_features[id2],
             pairwise_costs,
             affine_transforms,
+            transform_type,
             translation_threshold,
             highres_w,
             translation_center,
@@ -336,6 +348,7 @@ def get_SIFT_similarity(
     features_2,
     pairwise_costs,
     affine_transforms,
+    transform_type,
     translation_threshold,
     highres_w,
     translation_center,
@@ -348,8 +361,8 @@ def get_SIFT_similarity(
     candidates = ArrayList()
     FeatureTransform.matchFeatures(features_1, features_2, candidates, 0.92)
     inliers = ArrayList()
-    #model = AffineModel2D()  # or RigidModel2D()
-    model = RigidModel2D()
+
+    model = RigidModel2D() if transform_type == "rigid" else AffineModel2D()
     try:
         model_found = model.filterRansac(
             candidates,  # candidates
@@ -421,6 +434,7 @@ def get_SIFT_similarity(
                 new_features_2,
                 pairwise_costs,
                 affine_transforms,
+                transform_type,
                 translation_threshold,
                 highres_w,
                 translation_center,
@@ -609,6 +623,9 @@ class MagReorderer(object):
         gd.addCheckbox("multichannel", False)
         gd.addNumericField("channel", 0, 0)
         gd.addMessage("-" * 150)
+        gd.addMessage("Type of transform for fits across sections")
+        gd.addChoice("", ["rigid", "affine"], "rigid")
+        gd.addMessage("-" * 150)
         gd.addMessage(
             "Use normalize local contrast? "
             "\nProbably not needed for fluorescent beads imagery"
@@ -643,6 +660,7 @@ class MagReorderer(object):
             return
         p["multichannel"] = gd.getNextBoolean()
         p["channel"] = int(gd.getNextNumber())
+        p["transform"] = gd.getNextChoice()
         p["contrast"] = gd.getNextBoolean()
         p["contrast_size"] = int(gd.getNextNumber())
         p["sift_gaussian_1"] = float(gd.getNextNumber())
@@ -906,6 +924,7 @@ class MagReorderer(object):
                 all_features,
                 costs,
                 affine_transforms,
+                self.user_params["transform"],
                 translation_threshold,
                 self.highres_w,
             ],
