@@ -797,31 +797,6 @@ class MagReorderer(object):
         # self.show_roi_stack()
         # self.show_straight_roi_stack()
 
-    def export_highres(self):
-        dlog("High res export ...")
-        dir_export = mkdir_p(self.working_folder, "export_high_res")
-        for id_enum, id_section in enumerate(self.wafer.serial_order):
-            section = self.wafer[id_section]
-            size = 1.2 * self.highres_w
-            im = rotate(
-                open_subpixel_crop(
-                    self.get_im_path(-1),
-                    section.centroid[0] * self.downsampling_factor,
-                    section.centroid[1] * self.downsampling_factor,
-                    size,
-                    size,
-                    self.user_params["channel"],
-                ),
-                section.angle,
-            )
-            IJ.save(
-                im,
-                os.path.join(
-                    dir_export, "section_{:04}_{:04}.tif".format(id_enum, id_section)
-                ),
-            )
-        dlog("High res export completed")
-
     def extract_high_res_rois(self):
         """Extracts the ROIs in the high res image"""
         dlog("Extracting ROI images in {} sections...".format(self.n_sections))
@@ -1124,6 +1099,30 @@ class MagReorderer(object):
         self.wafer.compute_transforms()
         self.wafer.wafer_to_manager()
         dlog("The sections have been updated".center(100, "-"))
+
+    def export_highres(self):
+        dlog("High res export ...")
+        dir_export = mkdir_p(os.path.join(self.working_folder, "export_high_res"))
+        halfsize = int(0.6 * self.highres_w)
+        high_res_path = self.get_im_path(-1)
+        for id_enum, id_section in enumerate(self.wafer.serial_order):
+            section = self.wafer.sections[id_section]
+            im = open_subpixel_crop(
+                high_res_path,
+                section.centroid[0] * self.downsampling_factor - halfsize,
+                section.centroid[1] * self.downsampling_factor - halfsize,
+                2 * halfsize,
+                2 * halfsize,
+                self.user_params["channel"],
+            )
+            rotate(im, section.angle)
+            IJ.save(
+                im,
+                os.path.join(
+                    dir_export, "section_{:04}_{:04}.tif".format(id_enum, id_section)
+                ),
+            )
+        dlog("High res export completed")
 
     def show_roi_stack(self):
         user_view_size = 1000
