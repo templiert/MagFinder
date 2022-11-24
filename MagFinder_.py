@@ -2439,6 +2439,7 @@ if __name__ == "__main__":
                 " (not the same as the serial sectioning order of the sections)."
                 ' Saves the order in the .magc file in the field "stage_order"'
             ),
+            "[k] exports high resolution stack if companion high resolution image present",
         )
         + "<br><br><br></html>"
     )
