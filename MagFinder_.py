@@ -1721,9 +1721,6 @@ def handle_key_local(keyEvent):
         if selectedIndex != -1:
             manager.runCommand("Update")
         set_roi_and_update_roi_manager(manager.getCount() - 1)
-    if keycode == KeyEvent.VK_G:  # update drawing
-        manager.runCommand("Update")
-        wafer.manager_to_wafer()
     if keycode == KeyEvent.VK_T:
         wafer.close_mode()
         wafer.start_global_mode()
