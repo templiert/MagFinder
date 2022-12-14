@@ -2392,9 +2392,8 @@ if __name__ == "__main__":
         "[l] exports section transforms. Each transform transforms its section from global to local coordinates. "
         "If you apply the transforms to the global sections then:"
         + print_list(
-            "the centroid of the first serial section is at (0,0)",
+            "the centroids of all transformed local sections are at (0,0)",
             "the transformed local sections are aligned",
-            "if the MagReorderer has already run an alignment, then the centroids of all transformed local sections should be at (0,0)",
         )
     )
 
