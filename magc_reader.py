@@ -83,15 +83,15 @@ def read_magc(magc_path):
                 float(x) for x in config.get(header, "location").split(",")
             ]
 
-        elif header == "serialorder":
-            value = config.get("serialorder", "serialorder")
+        elif header == "serial_order":
+            value = config.get("serial_order", "serial_order")
             if value != "[]":
-                magc["serialorder"] = [int(x) for x in value.split(",")]
+                magc["serial_order"] = [int(x) for x in value.split(",")]
 
-        elif header == "tsporder":
-            value = config.get("tsporder", "tsporder")
+        elif header == "stage_order":
+            value = config.get("stage_order", "stage_order")
             if value != "[]":
-                magc["tsporder"] = [int(x) for x in value.split(",")]
+                magc["stage_order"] = [int(x) for x in value.split(",")]
 
     return magc
 
@@ -145,8 +145,8 @@ magc
             .
             :
             n: [x,y]
-'serialorder': [x1,...,xn]
-'tsporder': [x1,...,xn]
+'serial_order': [x1,...,xn]
+'stage_order': [x1,...,xn]
 """
 
 magc_path = xxx
