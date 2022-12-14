@@ -61,6 +61,19 @@ ACCEPTED_IMAGE_FORMATS = (
 )
 
 
+def mkdir_p(path):
+    path = os.path.join(path, "")
+    try:
+        os.mkdir(path)
+        IJ.log("Folder created: " + path)
+    except Exception as e:
+        if e[0] == 20047:
+            pass
+        else:
+            IJ.log("Exception during folder creation :" + str(e))
+    return path
+
+
 def dlog(x):
     """Double log to print and dlog"""
     IJ.log(x)
@@ -1099,6 +1112,19 @@ class Wafer(object):
             )
         ]
 
+    def export_transforms(self):
+        IJ.log("Saving transforms...")
+        if not self.transforms:
+            self.compute_transforms()
+        folder_transforms = mkdir_p(os.path.join(self.root, "section_transforms"))
+        for id_slab, transform in sorted(self.transforms.iteritems()):
+            path_transform = os.path.join(
+                folder_transforms, "transform_{:04}.txt".format(id_slab)
+            )
+            with open(path_transform, "w") as f:
+                f.write(transform.toString())
+        IJ.log("Saved transforms.")
+
 
 class Annotation(object):
     def __init__(self, annotation_type, poly, id_):
@@ -1646,6 +1672,8 @@ class KeyListener(KeyAdapter):
             wafer.manager_to_wafer()
             wafer.compute_stage_order()
             wafer.save()
+        elif keycode == KeyEvent.VK_L:
+            wafer.export_transforms()
         elif wafer.mode is Mode.GLOBAL:
             handle_key_global(event)
         elif wafer.mode is Mode.LOCAL:
@@ -2360,6 +2388,16 @@ def pairwise(iterable):
 
 
 if __name__ == "__main__":
+    L_HELP = (
+        "[l] exports section transforms. Each transform transforms its section from global to local coordinates. "
+        "If you apply the transforms to the global sections then:"
+        + print_list(
+            "the centroid of the first serial section is at (0,0)",
+            "the transformed local sections are aligned",
+            "if the MagReorderer has already run an alignment, then the centroids of all transformed local sections should be at (0,0)",
+        )
+    )
+
     HELP_MSG_GLOBAL = (
         "<html><br>[a] = Press the key a<br><br>"
         + '<p style="text-align:center"><a href="https://youtu.be/ZQLTBbM6dMA">20-minute video tutorial</a></p>'
@@ -2372,13 +2410,13 @@ if __name__ == "__main__":
             ),
             "Move up/down" + print_list("mouse wheel", "[&uarr] / [&darr]"),
             "Move left/right"
-            + print_list("[Shift] + Mouse wheel", "[&larr] / [&rarr]"),
+            + print_list("[Shift] + mouse wheel", "[&larr] / [&rarr]"),
             "Toggle"
             + print_list(
-                "filling of sections   [1]",
-                "filling of rois   [2]",
-                "filling of focus   [3]",
-                "labels [0] (number 0)",
+                "[1] filling of sections",
+                "[2] filling of rois",
+                "[3] filling of focus",
+                "[0] display labels",
             ),
         )
         + tag("Action", "h3")
@@ -2407,6 +2445,7 @@ if __name__ == "__main__":
                 'Stores the serial order in the .magc file in the field "serial_order".'
                 " We recommend to save beforehand a copy of the .magc file outside of the directory"
             ),
+            L_HELP,
         )
         + "<br><br><br></html>"
     )
@@ -2437,6 +2476,7 @@ if __name__ == "__main__":
                 ' Saves the order in the .magc file in the field "stage_order"'
             ),
             "[k] exports high resolution stack if companion high resolution image present",
+            L_HELP,
         )
         + "<br><br><br></html>"
     )
