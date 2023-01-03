@@ -336,11 +336,9 @@ class Wafer(object):
 
     def file_to_wafer(self):
         """Populates the wafer instance from the .magc file"""
-        start = System.nanoTime()
         config = ConfigParser.ConfigParser()
         with open(self.magc_path, "rb") as configfile:
             config.readfp(configfile)
-        dlog("Duration file_to_wafer 1: {}".format((System.nanoTime() - start) * 1e-9))
         for header in config.sections():
             if "." in header:
                 annotation_type, section_id, annotation_id = type_id(
@@ -380,14 +378,12 @@ class Wafer(object):
                 len(self.landmarks),
             )
         )
-        dlog("Duration file_to_wafer: {}".format((System.nanoTime() - start) * 1e-9))
 
     def manager_to_wafer(self):
         """
         Populates the wafer from the roi manager
         Typically called after the user interacted with the UI
         """
-        start = System.nanoTime()
         self.clear_annotations()
         for roi in self.manager.iterator():
             annotation_type, section_id, annotation_id = type_id(roi.getName())
@@ -400,25 +396,14 @@ class Wafer(object):
             )
         self.clear_transforms()
         self.compute_transforms()
-        dlog(
-            "Duration manager_to_wafer: {:.2f}".format(
-                (System.nanoTime() - start) * 1e-9
-            )
-        )
 
     def wafer_to_manager(self):
         """Draws all rois from the wafer instance into the manager"""
-        start = System.nanoTime()
         self.manager.reset()
         if self.mode is Mode.GLOBAL:
             self.wafer_to_manager_global()
         else:
             self.wafer_to_manager_local()
-        dlog(
-            "Duration wafer_to_manager: {:.2f} in mode {}".format(
-                (System.nanoTime() - start) * 1e-9, self.mode
-            )
-        )
 
     def wafer_to_manager_global(self):
         for landmark in self.landmarks.values():
@@ -486,7 +471,6 @@ class Wafer(object):
 
     def save(self):
         """Saves the wafer annotations to the .magc file"""
-        start = System.nanoTime()
         dlog("Saving ...")
         self.manager_to_wafer()
         config = ConfigParser.ConfigParser()
@@ -580,11 +564,9 @@ class Wafer(object):
             config.write(configfile)
         dlog("Saved to {}".format(self.magc_path))
         self.save_csv()
-        dlog("Duration save: {:.2f}".format((System.nanoTime() - start) * 1e-9))
 
     def save_csv(self):
         # TODO currently broken with multirois
-        start = System.nanoTime()
         csv_path = os.path.join(self.root, "annotations.csv")
         with open(csv_path, "w") as f:
             f.write(
@@ -657,7 +639,6 @@ class Wafer(object):
                     )
                 f.write("\n")
         dlog("Annotations saved to {}".format(csv_path))
-        dlog("Duration save_csv: {:.2f}".format((System.nanoTime() - start) * 1e-9))
 
     def close_mode(self):
         """
@@ -676,7 +657,6 @@ class Wafer(object):
 
     def start_local_mode(self):
         """Starts local display mode"""
-        start = System.nanoTime()
         dlog("Starting local mode ...")
         self.mode = Mode.LOCAL
         self.compute_transforms()
@@ -687,11 +667,6 @@ class Wafer(object):
         self.manager.runCommand("Show None")
         set_roi_and_update_roi_manager(0)  # select first ROI
         self.arrange_windows()
-        dlog(
-            "Duration start_local_mode: {:.2f}".format(
-                (System.nanoTime() - start) * 1e-9
-            )
-        )
 
     def compute_transforms(self):
         """
@@ -702,7 +677,6 @@ class Wafer(object):
         they contain an offset due to the fact that an ImagePlus is displayed
         with their top-left corner at 0,0 and not at -w/2,-h/2
         """
-        start = System.nanoTime()
         _, _, display_size, _ = self.get_display_parameters()
         self.local_display_size = display_size
         for section_id, section in self.sections.iteritems():
@@ -719,15 +693,9 @@ class Wafer(object):
             self.poly_transforms_inverse[section_id] = self.poly_transforms[
                 section_id
             ].inverse()
-        dlog(
-            "Duration compute_transforms: {:.2f}".format(
-                (System.nanoTime() - start) * 1e-9
-            )
-        )
 
     def create_local_stack(self):
         """Creates the local stack with imglib2 framework"""
-        start = System.nanoTime()
         display_params = (
             [-intr(0.5 * v) for v in self.local_display_size],
             [intr(0.5 * v) for v in self.local_display_size],
@@ -752,12 +720,6 @@ class Wafer(object):
         )
         IL.show(self.img)
         self.image_local = IJ.getImage()
-
-        dlog(
-            "Duration create_local_stack: {:.2f}".format(
-                (System.nanoTime() - start) * 1e-9
-            )
-        )
 
     def add(self, annotation_type, poly, annotation_id):
         """
@@ -947,7 +909,6 @@ class Wafer(object):
         IJ.selectWindow(self.image.getTitle())
 
     def start_global_mode(self):
-        start = System.nanoTime()
         self.mode = Mode.GLOBAL
         IJ.run("Labels...", "color=white font=10 use draw")
         self.image.show()
@@ -959,11 +920,6 @@ class Wafer(object):
         # self.manager.runCommand("Show All with labels")
         IJ.run("Labels...", "color=white font=10 use draw")
         self.manager.runCommand("Show All without labels")
-        dlog(
-            "Duration start_global_mode: {:.2f}".format(
-                (System.nanoTime() - start) * 1e-9
-            )
-        )
 
     def suggest_annotation_ids(self, annotation_type):
         item_ids = [item.id_ for item in getattr(self, annotation_type.name).values()]
