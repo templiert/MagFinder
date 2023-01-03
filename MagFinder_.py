@@ -143,67 +143,6 @@ class AnnotationType(object):
         return [cls.ROI, cls.FOCUS, cls.MAGNET]
 
 
-def transfer_wafer(wafer_1, wafer_2):
-    """
-    Transforms the annotation from one wafer instance to another one.
-    The same ficucials must be defined in the two wafer instances.
-    You should write some code to get it to work:
-    wafer_1 = Wafer(path_1)
-    wafer_2 = Wafer(path_2) ...
-    """
-    dlog(
-        ("Transferring annotations from {} to {} ...".format(wafer_1, wafer_2)).center(
-            100, "-"
-        )
-    )
-    landmarks_1 = [wafer_1.landmarks[key].centroid for key in sorted(wafer_1.landmarks)]
-    landmarks_2 = [wafer_2.landmarks[key].centroid for key in sorted(wafer_2.landmarks)]
-    aff = GeometryCalculator.affine_t(
-        [l[0] for l in landmarks_1],
-        [l[1] for l in landmarks_1],
-        [l[0] for l in landmarks_2],
-        [l[1] for l in landmarks_2],
-    )
-    wafer_2.clear_annotations()
-    for key in sorted(wafer_1.sections):
-        for annotation_type in AnnotationType.all_but_landmark():
-            if hasattr(wafer_1, annotation_type.name) and key in getattr(
-                wafer_1, annotation_type.name
-            ):
-                wafer_2.add(
-                    annotation_type,
-                    GeometryCalculator.points_to_poly(
-                        GeometryCalculator.xy_to_points(
-                            *GeometryCalculator.apply_affine_t(
-                                [
-                                    p[0]
-                                    for p in getattr(wafer_1, annotation_type.name)[
-                                        key
-                                    ].points
-                                ],
-                                [
-                                    p[1]
-                                    for p in getattr(wafer_1, annotation_type.name)[
-                                        key
-                                    ].points
-                                ],
-                                aff,
-                            )
-                        )
-                    ),
-                    key,
-                )
-    wafer_2.wafer_to_manager()
-    wafer_2.save()
-    dlog(
-        (
-            "Completed transfer of annotations from {} to {} ...".format(
-                wafer_1, wafer_2
-            )
-        ).center(100, "-")
-    )
-
-
 class Wafer(object):
     def __init__(self, magc_path=None):
         self.mode = Mode.GLOBAL
@@ -252,6 +191,10 @@ class Wafer(object):
         if self.mode is Mode.GLOBAL:
             return self.image_global
         return self.img_local
+
+    @property
+    def landmarks_xy(self):
+        return [self.landmarks[key].centroid for key in sorted(self.landmarks)]
 
     @contextmanager
     def set_mode(self, mode):
@@ -724,7 +667,8 @@ class Wafer(object):
     def add(self, annotation_type, poly, annotation_id):
         """
         Adds an annotation to the wafer and returns it
-        annotation_id is an int except for rois: (section_id, roi_id)
+        annotation_id is a tuple for rois (section_id, roi_id)
+        and an int otherwise
         """
 
         if annotation_type is AnnotationType.ROI:
@@ -1067,6 +1011,74 @@ class Wafer(object):
             with open(path_transform, "w") as f:
                 f.write(transform.toString())
         IJ.log("Saved transforms.")
+
+    def transfer_from_source_wafer(self):
+        """
+        Imports annotations from a source wafer .magc file.
+        The same ficucials must be defined in the two wafers.
+        The fiducials are used to map all annotations from the source wafer
+        into this current target wafer.
+        Only available in global mode.
+        """
+        wafer_target = self
+        path_source = get_path(
+            "Select .magc file from which annotations should be imported"
+        )
+        if path_source is None:
+            return
+        wafer_source = Wafer(magc_path=path_source)
+
+        aff = GeometryCalculator.affine_t(
+            [l[0] for l in wafer_target.landmarks_xy],
+            [l[1] for l in wafer_target.landmarks_xy],
+            [l[0] for l in wafer_source.landmarks_xy],
+            [l[1] for l in wafer_source.landmarks_xy],
+        )
+        wafer_target.clear_annotations()
+        wafer_target.clear_transforms()
+        for key in sorted(wafer_source.sections):
+            for annotation_type in AnnotationType.all_but_landmark():
+                if not (
+                    hasattr(wafer_source, annotation_type.name)
+                    and key in getattr(wafer_source, annotation_type.name)
+                ):
+                    continue
+                if annotation_type is AnnotationType.ROI:
+                    rois = wafer_source.rois[key]
+                    if not rois:
+                        continue
+                    for key_roi, roi in rois.iteritems():
+                        wafer_target.add(
+                            annotation_type,
+                            GeometryCalculator.points_to_poly(
+                                GeometryCalculator.xy_to_points(
+                                    *GeometryCalculator.apply_affine_t(
+                                        [p[0] for p in roi.points],
+                                        [p[1] for p in roi.points],
+                                        aff,
+                                    )
+                                )
+                            ),
+                            key_roi,
+                        )
+                else:
+                    annotation = getattr(wafer_source, annotation_type.name)[key]
+                    wafer_target.add(
+                        annotation_type,
+                        GeometryCalculator.points_to_poly(
+                            GeometryCalculator.xy_to_points(
+                                *GeometryCalculator.apply_affine_t(
+                                    [p[0] for p in annotation.points],
+                                    [p[1] for p in annotation.points],
+                                    aff,
+                                )
+                            )
+                        ),
+                        key,
+                    )
+        wafer_target.compute_transforms()
+        wafer_target.wafer_to_manager()
+        dlog("Completed transfer from {} to {} ...".format(wafer_source, wafer_target))
 
 
 class Annotation(object):
@@ -1661,6 +1673,8 @@ class KeyListener(KeyAdapter):
             move_fov("left", self.wafer)
         if keycode == KeyEvent.VK_M:
             self.handle_key_m_global()
+        if keycode == KeyEvent.VK_K:
+            self.wafer.transfer_from_source_wafer()
 
     def handle_key_m_global(self):
         """Saves overview"""
@@ -2014,6 +2028,12 @@ def move_fov(a, wafer):
     im.updateAndDraw()
 
 
+def get_path(text):
+    path = IJ.getFilePath(text)
+    dlog("File selected: {}".format(path))
+    return path
+
+
 def get_name(text, default_name="", cancel_msg=None):
     gd = GenericDialog(text)
     gd.addStringField(text, default_name)
@@ -2335,6 +2355,7 @@ if __name__ == "__main__":
             "[s] saves (happens automatically when toggling [t] and quitting [q])",
             "[m] exports a summary image of global mode",
             "[n] renumbers the sections to have continuous numbers without gaps (0,1,3,4,6 --> 0,1,2,3,4)",
+            "[k] transfers annotations from a source wafer into this currently open target wafer (using landmarks for the transform)",
             (
                 "[o]   (letter o) computes the section order that minimizes the travel of the microscope stage"
                 " (not the same as the serial sectioning order of the sections)."
