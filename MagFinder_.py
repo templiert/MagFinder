@@ -102,8 +102,17 @@ def get_square_row_col(n):
     return n_rows, n_cols
 
 
+class Direction(object):
+    """Enum for directions"""
+
+    LEFT = "left"
+    RIGHT = "right"
+    UP = "up"
+    DOWN = "down"
+
+
 class Mode(object):
-    """The display modes of the plugin"""
+    """Enum for the display modes"""
 
     GLOBAL = "global"
     LOCAL = "local"
@@ -1581,14 +1590,14 @@ class MouseWheelListener(MouseAdapter):
         mouseWheelEvent.consume()
         if mouseWheelEvent.isShiftDown():
             if mouseWheelEvent.getWheelRotation() == 1:
-                move_fov("right", self.wafer)
+                move_fov(Direction.RIGHT, self.wafer)
             else:
-                move_fov("left", self.wafer)
+                move_fov(Direction.LEFT, self.wafer)
         elif not mouseWheelEvent.isShiftDown() and not mouseWheelEvent.isControlDown():
             if mouseWheelEvent.getWheelRotation() == 1:
-                move_fov("down", self.wafer)
+                move_fov(Direction.DOWN, self.wafer)
             else:
-                move_fov("up", self.wafer)
+                move_fov(Direction.UP, self.wafer)
         elif mouseWheelEvent.isControlDown():
             if mouseWheelEvent.getWheelRotation() == 1:
                 IJ.run("Out [-]")
@@ -1664,13 +1673,13 @@ class KeyListener(KeyAdapter):
         if keycode == KeyEvent.VK_MINUS:
             IJ.run("Out [-]")
         if keycode == KeyEvent.VK_UP:
-            move_fov("up", self.wafer)
+            move_fov(Direction.UP, self.wafer)
         if keycode == KeyEvent.VK_DOWN:
-            move_fov("down", self.wafer)
+            move_fov(Direction.DOWN, self.wafer)
         if keycode == KeyEvent.VK_RIGHT:
-            move_fov("right", self.wafer)
+            move_fov(Direction.RIGHT, self.wafer)
         if keycode == KeyEvent.VK_LEFT:
-            move_fov("left", self.wafer)
+            move_fov(Direction.LEFT, self.wafer)
         if keycode == KeyEvent.VK_M:
             self.handle_key_m_global()
         if keycode == KeyEvent.VK_K:
@@ -2002,22 +2011,19 @@ class KeyListener(KeyAdapter):
         select_roi_by_name(str(self.wafer.sections[next_section_id]))
 
 
-def move_fov(a, wafer):
+def move_fov(d, wafer):
     """Moves field of view of the image"""
     im = wafer.image
     canvas = im.getCanvas()
     r = canvas.getSrcRect()
     # adjust increment depending on zoom level
     increment = intr(40 / float(canvas.getMagnification()))
-    xPixelIncrement, yPixelIncrement = 0
-    if a == "right":
-        xPixelIncrement = increment
-    elif a == "left":
-        xPixelIncrement = -increment
-    elif a == "down":
-        yPixelIncrement = increment
-    elif a == "up":
-        yPixelIncrement = -increment
+    xPixelIncrement = increment * (
+        -1 if d is Direction.LEFT else 1 if d is Direction.RIGHT else 0
+    )
+    yPixelIncrement = increment * (
+        -1 if d is Direction.UP else 1 if d is Direction.DOWN else 0
+    )
     new_rectangle = Rectangle(
         min(max(0, r.x + xPixelIncrement), im.getWidth() - r.width),
         min(max(0, r.y + yPixelIncrement), im.getHeight() - r.height),
