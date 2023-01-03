@@ -155,7 +155,7 @@ class AnnotationType(object):
 class Wafer(object):
     def __init__(self, magc_path=None):
         self.mode = Mode.GLOBAL
-        self.root, self.image_path = self.init_image_path()
+        self.root, self.image_path = self.init_image_path(magc_path)
         self.tsp_solver = TSPSolver(self.root)
         self.manager = init_manager()
         if magc_path is None:
@@ -226,22 +226,25 @@ class Wafer(object):
     def set_local_mode(self):
         self.mode = Mode.LOCAL
 
-    def init_image_path(self):
+    def init_image_path(self, magc_path=None):
         """
         Finds the image used for navigation in magfinder.
         It is the image with the smallest size in the directory
         that does not contain "overview" in its name.
         """
-        try:
-            root = os.path.normpath(
-                DirectoryChooser("Select the experiment folder.").getDirectory()
-            )
-        except Exception:
-            IJ.showMessage("Exit", "There was a problem accessing the folder")
-            sys.exit("No directory was selected. Exiting.")
-        if not os.path.isdir(root):
-            IJ.showMessage("Exit", "No directory was selected. Exiting.")
-            sys.exit("No directory was selected. Exiting.")
+        if magc_path is not None:
+            root = os.path.dirname(magc_path)
+        else:
+            try:
+                root = os.path.normpath(
+                    DirectoryChooser("Select the experiment folder.").getDirectory()
+                )
+            except Exception:
+                IJ.showMessage("Exit", "There was a problem accessing the folder")
+                sys.exit("No directory was selected. Exiting.")
+            if not os.path.isdir(root):
+                IJ.showMessage("Exit", "No directory was selected. Exiting.")
+                sys.exit("No directory was selected. Exiting.")
         try:
             wafer_im_path = sorted(
                 [
@@ -255,12 +258,12 @@ class Wafer(object):
         except IndexError:
             IJ.showMessage(
                 "Message",
-                (
-                    "There is no image (.tif, .png, .jpg, .jpeg, .tiff) in the experiment folder you selected."
-                    + "\nAdd an image and start again the plugin."
-                ),
+                "There is no image (.tif, .png, .jpg, .jpeg, .tiff) in the experiment folder you selected."
+                "\nAdd an image and start again the plugin"
+                "\n(Disregard this message if you are doing a wafer transfer and know what you are doing)",
             )
-            sys.exit()
+            # sys.exit()
+            return root, None
         return root, wafer_im_path
 
     def init_magc_path(self):
@@ -359,6 +362,13 @@ class Wafer(object):
 
     def wafer_to_manager_global(self):
         for landmark in self.landmarks.values():
+            if not (
+                0 < landmark.centroid[0] < self.image.getWidth()
+                and 0 < landmark.centroid[1] < self.image.getHeight()
+            ):
+                # do not draw landmark if it is not visible,
+                # otherwise it creates a weird offset with negative coordinates
+                continue
             self.manager.addRoi(landmark.poly)
             landmark.poly.setHandleSize(landmark.type_.handle_size_global)
         for section_id, section in sorted(self.sections.iteritems()):
@@ -838,6 +848,9 @@ class Wafer(object):
                 set_roi_and_update_roi_manager(self.manager.getCount() - 1)
 
     def init_images_global(self):
+        if self.image_path is None:
+            dlog("Warning: images not properly initialized")
+            return
         self.image_global = IJ.openImage(self.image_path)
         self.img_global = IL.wrap(self.image)
 
@@ -1038,22 +1051,22 @@ class Wafer(object):
         wafer_source = Wafer(magc_path=path_source)
 
         aff = GeometryCalculator.affine_t(
-            [l[0] for l in wafer_target.landmarks_xy],
-            [l[1] for l in wafer_target.landmarks_xy],
             [l[0] for l in wafer_source.landmarks_xy],
             [l[1] for l in wafer_source.landmarks_xy],
+            [l[0] for l in wafer_target.landmarks_xy],
+            [l[1] for l in wafer_target.landmarks_xy],
         )
         wafer_target.clear_annotations()
         wafer_target.clear_transforms()
-        for key in sorted(wafer_source.sections):
+        for key_section in sorted(wafer_source.sections):
             for annotation_type in AnnotationType.all_but_landmark():
                 if not (
                     hasattr(wafer_source, annotation_type.name)
-                    and key in getattr(wafer_source, annotation_type.name)
+                    and key_section in getattr(wafer_source, annotation_type.name)
                 ):
                     continue
                 if annotation_type is AnnotationType.ROI:
-                    rois = wafer_source.rois[key]
+                    rois = wafer_source.rois[key_section]
                     if not rois:
                         continue
                     for key_roi, roi in rois.iteritems():
@@ -1068,10 +1081,12 @@ class Wafer(object):
                                     )
                                 )
                             ),
-                            key_roi,
+                            (key_section, key_roi),
                         )
                 else:
-                    annotation = getattr(wafer_source, annotation_type.name)[key]
+                    annotation = getattr(wafer_source, annotation_type.name)[
+                        key_section
+                    ]
                     wafer_target.add(
                         annotation_type,
                         GeometryCalculator.points_to_poly(
@@ -1083,8 +1098,10 @@ class Wafer(object):
                                 )
                             )
                         ),
-                        key,
+                        key_section,
                     )
+        wafer_target.stage_order = wafer_source.stage_order
+        wafer_target.serial_order = wafer_source.serial_order
         wafer_target.compute_transforms()
         wafer_target.wafer_to_manager()
         dlog("Completed transfer from {} to {} ...".format(wafer_source, wafer_target))
