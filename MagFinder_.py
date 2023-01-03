@@ -80,28 +80,31 @@ def dlog(x):
     print(x)
 
 
-def start_threads(function, fraction_cores=1, arguments=None, n_threads=None):
-    if n_threads is None:
-        n_threads = max(
-            int(Runtime.getRuntime().availableProcessors() * fraction_cores), 1
-        )
-    thread_range = range(n_threads)
-    dlog("Running in parallel with ThreadRange = " + str(thread_range))
-    threads = []
-    for p in thread_range:
-        if arguments is None:
-            thread = threading.Thread(target=function)
-        else:
-            thread = threading.Thread(group=None, target=function, args=arguments)
-        threads.append(thread)
-        thread.start()
-        dlog("Thread {} started".format(p))
-    for id_thread, thread in enumerate(threads):
-        thread.join()
-        dlog("Thread {} joined".format(id_thread))
+def intr(x):
+    """Float to int with rounding (instead of int(x) that does a floor)"""
+    return int(round(x))
+
+
+def pairwise(iterable):
+    """from https://docs.python.org/3/library/itertools.html#itertools.pairwise
+    'ABCD' --> AB BC CD"""
+    a, b = itertools.tee(iterable)
+    next(b, None)
+    return zip(a, b)
+
+
+def get_square_row_col(n):
+    """Returns a grid close to being square with n_rows*n_cols > n"""
+    n_rows = int(n**0.5)
+    n_cols = n // n_rows
+    if n_rows * n_cols < n:
+        n_rows += 1
+    return n_rows, n_cols
 
 
 class Mode(object):
+    """The display modes of the plugin"""
+
     GLOBAL = "global"
     LOCAL = "local"
 
@@ -127,32 +130,17 @@ class AnnotationType(object):
     @classmethod
     def all(cls):
         """Returns all annotation types"""
-        return [
-            cls.SECTION,
-            cls.ROI,
-            cls.FOCUS,
-            cls.MAGNET,
-            cls.LANDMARK,
-        ]
+        return [cls.SECTION, cls.ROI, cls.FOCUS, cls.MAGNET, cls.LANDMARK]
 
     @classmethod
     def all_but_landmark(cls):
         """Returns all annotation types except landmarks"""
-        return [
-            cls.SECTION,
-            cls.ROI,
-            cls.FOCUS,
-            cls.MAGNET,
-        ]
+        return [cls.SECTION, cls.ROI, cls.FOCUS, cls.MAGNET]
 
     @classmethod
     def section_annotations(cls):
         """Returns all annotation types except landmarks"""
-        return [
-            cls.ROI,
-            cls.FOCUS,
-            cls.MAGNET,
-        ]
+        return [cls.ROI, cls.FOCUS, cls.MAGNET]
 
 
 def transfer_wafer(wafer_1, wafer_2):
@@ -237,11 +225,11 @@ class Wafer(object):
         """poly_tranforms: global to local"""
         self.poly_transforms_inverse = {}
         """poly_tranforms_inverse: local to global"""
-        # the serial order is the order in which the sections have been cut
         self.serial_order = []
-        # the stage_order is the order that minimizes microscope stage travel
-        # to image one section after the other
+        """the serial order is the order in which the sections have been cut"""
         self.stage_order = []
+        """the stage_order is the order that minimizes microscope stage travel
+        to image one section after the other"""
         self.GC = GeometryCalculator
         self.file_to_wafer()
         IJ.setTool("polygon")
@@ -252,6 +240,7 @@ class Wafer(object):
             return 0
         return len(self.sections)
 
+    # TODO this image vs img does not look optimal
     @property
     def image(self):
         if self.mode is Mode.GLOBAL:
@@ -273,11 +262,10 @@ class Wafer(object):
         finally:
             self.mode = old_mode
 
-    @staticmethod
-    def set_listeners():
+    def set_listeners(self):
         """Sets key and mouse wheel listeners"""
-        add_key_listener_everywhere(KeyListener())
-        add_mouse_wheel_listener_everywhere(MouseWheelListener())
+        add_key_listener_everywhere(KeyListener(self))
+        add_mouse_wheel_listener_everywhere(MouseWheelListener(self))
 
     def set_global_mode(self):
         """useful when wafer accessed from another module"""
@@ -394,6 +382,30 @@ class Wafer(object):
         )
         dlog("Duration file_to_wafer: {}".format((System.nanoTime() - start) * 1e-9))
 
+    def manager_to_wafer(self):
+        """
+        Populates the wafer from the roi manager
+        Typically called after the user interacted with the UI
+        """
+        start = System.nanoTime()
+        self.clear_annotations()
+        for roi in self.manager.iterator():
+            annotation_type, section_id, annotation_id = type_id(roi.getName())
+            self.add(
+                annotation_type,
+                roi,
+                (section_id, annotation_id)
+                if annotation_type is AnnotationType.ROI
+                else section_id,
+            )
+        self.clear_transforms()
+        self.compute_transforms()
+        dlog(
+            "Duration manager_to_wafer: {:.2f}".format(
+                (System.nanoTime() - start) * 1e-9
+            )
+        )
+
     def wafer_to_manager(self):
         """Draws all rois from the wafer instance into the manager"""
         start = System.nanoTime()
@@ -471,30 +483,6 @@ class Wafer(object):
         self.transforms = {}
         self.poly_transforms = {}
         self.poly_transforms_inverse = {}
-
-    def manager_to_wafer(self):
-        """
-        Populates the wafer from the roi manager
-        Typically called after the user interacted with the UI
-        """
-        start = System.nanoTime()
-        self.clear_annotations()
-        for roi in self.manager.iterator():
-            annotation_type, section_id, annotation_id = type_id(roi.getName())
-            self.add(
-                annotation_type,
-                roi,
-                (section_id, annotation_id)
-                if annotation_type is AnnotationType.ROI
-                else section_id,
-            )
-        self.clear_transforms()
-        self.compute_transforms()
-        dlog(
-            "Duration manager_to_wafer: {:.2f}".format(
-                (System.nanoTime() - start) * 1e-9
-            )
-        )
 
     def save(self):
         """Saves the wafer annotations to the .magc file"""
@@ -982,7 +970,7 @@ class Wafer(object):
         return suggest_ids(item_ids)
 
     def get_closest(self, annotation_type, point):
-        """Get the closest annotations of a certain type closest to a given point"""
+        """Get the annotations of a certain type closest to a given point"""
         distances = sorted(
             [
                 [self.GC.get_distance(point, item.centroid), item]
@@ -1093,7 +1081,6 @@ class Wafer(object):
             for subroi_id, subroi in self.rois[key].iteritems():
                 self.add_roi(subroi.poly, (new_key, subroi_id))
                 del self.rois[key][subroi_id]
-
         self.clear_transforms()
         self.compute_transforms()
         self.wafer_to_manager()
@@ -1152,7 +1139,7 @@ class Annotation(object):
         return "{}.{:04}".format(self.type_.string, self.id_)
 
     def compute_area(self):
-        """Simply take bounding box area. getStatistics.pixelcount was too slow"""
+        """Returns bounding box area. getStatistics.pixelcount was too slow"""
         bounds = self.poly.getBounds()
         return bounds.getHeight() * bounds.getWidth()
 
@@ -1170,12 +1157,9 @@ class Annotation(object):
 
     def compute_angle(self):
         if len(self) < 2:
-            return None
+            return
         return self.poly.getFloatAngle(
-            self.points[0][0],
-            self.points[0][1],
-            self.points[1][0],
-            self.points[1][1],
+            self.points[0][0], self.points[0][1], self.points[1][0], self.points[1][1]
         )
 
 
@@ -1615,465 +1599,447 @@ class ButtonClick(ActionListener):
         string_field.setText(source.label.split(" ")[-1])
 
 
-# --- Mouse wheel listeners --- #
 class MouseWheelListener(MouseAdapter):
+    def __init__(self, wafer):
+        self.wafer = wafer
+
     def mouseWheelMoved(self, mouseWheelEvent):
-        if wafer.mode is Mode.GLOBAL:
-            handle_mouse_wheel_global(mouseWheelEvent)
-        elif wafer.mode is Mode.LOCAL:
-            handle_mouse_wheel_local(mouseWheelEvent)
-
-
-def handle_mouse_wheel_global(mouseWheelEvent):
-    mouseWheelEvent.consume()
-    if mouseWheelEvent.isShiftDown():
-        if mouseWheelEvent.getWheelRotation() == 1:
-            move_fov("right")
+        if self.wafer.mode is Mode.GLOBAL:
+            self.handle_mouse_wheel_global(mouseWheelEvent)
         else:
-            move_fov("left")
-    elif (not mouseWheelEvent.isShiftDown()) and (not mouseWheelEvent.isControlDown()):
-        if mouseWheelEvent.getWheelRotation() == 1:
-            move_fov("down")
+            self.handle_mouse_wheel_local(mouseWheelEvent)
+
+    def handle_mouse_wheel_global(self, mouseWheelEvent):
+        mouseWheelEvent.consume()
+        if mouseWheelEvent.isShiftDown():
+            if mouseWheelEvent.getWheelRotation() == 1:
+                move_fov("right", self.wafer)
+            else:
+                move_fov("left", self.wafer)
+        elif not mouseWheelEvent.isShiftDown() and not mouseWheelEvent.isControlDown():
+            if mouseWheelEvent.getWheelRotation() == 1:
+                move_fov("down", self.wafer)
+            else:
+                move_fov("up", self.wafer)
+        elif mouseWheelEvent.isControlDown():
+            if mouseWheelEvent.getWheelRotation() == 1:
+                IJ.run("Out [-]")
+            elif mouseWheelEvent.getWheelRotation() == -1:
+                IJ.run("In [+]")
+
+    @staticmethod
+    def handle_mouse_wheel_local(mouseWheelEvent):
+        mouseWheelEvent.consume()
+        if mouseWheelEvent.isControlDown():
+            move_roi_manager_selection(10 * mouseWheelEvent.getWheelRotation())
         else:
-            move_fov("up")
-    elif mouseWheelEvent.isControlDown():
-        if mouseWheelEvent.getWheelRotation() == 1:
-            IJ.run("Out [-]")
-        elif mouseWheelEvent.getWheelRotation() == -1:
-            IJ.run("In [+]")
+            move_roi_manager_selection(mouseWheelEvent.getWheelRotation())
 
 
-def handle_mouse_wheel_local(mouseWheelEvent):
-    mouseWheelEvent.consume()
-    if mouseWheelEvent.isControlDown():
-        move_roi_manager_selection(10 * mouseWheelEvent.getWheelRotation())
-    else:
-        move_roi_manager_selection(mouseWheelEvent.getWheelRotation())
-
-
-# --- End Mouse wheel listeners --- #
-
-# --- Key listeners --- #
 class KeyListener(KeyAdapter):
+    def __init__(self, wafer):
+        self.wafer = wafer
+        self.manager = get_roi_manager()  # TODO does it survive a roi manager reset?
+
     def keyPressed(self, event):
         keycode = event.getKeyCode()
         event.consume()
-        if event.getKeyCode() == KeyEvent.VK_J and wafer.mode is Mode.GLOBAL:
-            reorderer = MagReorderer.MagReorderer(wafer)
-            reorderer.reorder()
+        if event.getKeyCode() == KeyEvent.VK_J and self.wafer.mode is Mode.GLOBAL:
+            MagReorderer.MagReorderer(self.wafer).reorder()
         elif keycode == KeyEvent.VK_S:
-            wafer.save()
+            self.wafer.save()
         elif keycode == KeyEvent.VK_Q:  # terminate and save
-            wafer.manager_to_wafer()  # will be repeated in close_mode but it's OK
-            wafer.compute_stage_order()
-            wafer.close_mode()
-            wafer.manager.close()
+            self.wafer.manager_to_wafer()  # will be repeated in close_mode but it's OK
+            self.wafer.compute_stage_order()
+            self.wafer.close_mode()
+            self.manager.close()
         elif keycode == KeyEvent.VK_O:
-            wafer.manager_to_wafer()
-            wafer.compute_stage_order()
-            wafer.save()
+            self.wafer.manager_to_wafer()
+            self.wafer.compute_stage_order()
+            self.wafer.save()
         elif keycode == KeyEvent.VK_L:
-            wafer.export_transforms()
-        elif wafer.mode is Mode.GLOBAL:
-            handle_key_global(event)
-        elif wafer.mode is Mode.LOCAL:
-            handle_key_local(event)
-
-
-def handle_key_global(keyEvent):
-    keycode = keyEvent.getKeyCode()
-    if keycode == KeyEvent.VK_A:
-        handle_key_a()
-    if keycode == KeyEvent.VK_N:
-        wafer.renumber_sections()
-    if keycode == KeyEvent.VK_T:
-        if wafer.sections:
-            wafer.close_mode()
-            wafer.start_local_mode()
-        else:
+            self.wafer.export_transforms()
+        if keycode == KeyEvent.VK_H:
             IJ.showMessage(
-                "Cannot toggle to local mode because there are no sections defined."
+                "Help for {} mode".format(self.wafer.mode),
+                HELP_MSG_GLOBAL if self.wafer.mode is Mode.GLOBAL else HELP_MSG_LOCAL,
             )
-    if keycode == KeyEvent.VK_H:
-        IJ.showMessage("Help for global mode", HELP_MSG_GLOBAL)
-    if keycode == KeyEvent.VK_1:
-        toggle_fill(AnnotationType.SECTION)
-    if keycode == KeyEvent.VK_2:
-        toggle_fill(AnnotationType.ROI)
-    if keycode == KeyEvent.VK_3:
-        toggle_fill(AnnotationType.FOCUS)
-    if keycode == KeyEvent.VK_0:
-        toggle_labels()
-    if keycode == KeyEvent.VK_EQUALS:
-        IJ.run("In [+]")
-    if keycode == KeyEvent.VK_MINUS:
-        IJ.run("Out [-]")
-    if keycode == KeyEvent.VK_UP:
-        move_fov("up")
-    if keycode == KeyEvent.VK_DOWN:
-        move_fov("down")
-    if keycode == KeyEvent.VK_RIGHT:
-        move_fov("right")
-    if keycode == KeyEvent.VK_LEFT:
-        move_fov("left")
-    if keycode == KeyEvent.VK_M:
-        handle_key_m_global()
+        elif self.wafer.mode is Mode.GLOBAL:
+            self.handle_key_global(event)
+        elif self.wafer.mode is Mode.LOCAL:
+            self.handle_key_local(event)
 
-
-def handle_key_local(keyEvent):
-    keycode = keyEvent.getKeyCode()
-    manager = get_roi_manager()
-    if keycode == KeyEvent.VK_A:
-        handle_key_a()
-    if keycode == KeyEvent.VK_X:
-        handle_key_x_local()
-    if keycode == KeyEvent.VK_P:
-        handle_key_p_local()
-    if keycode == KeyEvent.VK_M:
-        handle_key_m_local()
-    if keycode == KeyEvent.VK_D:
-        move_roi_manager_selection(-1)
-    if keycode == KeyEvent.VK_F:
-        move_roi_manager_selection(1)
-    if keycode == KeyEvent.VK_C:
-        move_roi_manager_selection(-10)
-    if keycode == KeyEvent.VK_V:
-        move_roi_manager_selection(10)
-    if keycode == KeyEvent.VK_E:
-        selectedIndex = manager.getSelectedIndex()
-        if selectedIndex != -1:
-            manager.runCommand("Update")
-        set_roi_and_update_roi_manager(0)
-    if keycode == KeyEvent.VK_R:
-        selectedIndex = manager.getSelectedIndex()
-        if selectedIndex != -1:
-            manager.runCommand("Update")
-        set_roi_and_update_roi_manager(manager.getCount() - 1)
-    if keycode == KeyEvent.VK_T:
-        wafer.close_mode()
-        wafer.start_global_mode()
-    if keycode == KeyEvent.VK_H:
-        IJ.showMessage("Help for local mode", HELP_MSG_LOCAL)
-    if keycode == KeyEvent.VK_G:
-        propagate_to_next_section()
-    keyEvent.consume()
-
-
-def handle_key_m_global():
-    """Saves overview"""
-    manager = wafer.manager
-    for roi in manager.iterator():
-        annotation_type, section_id, annotation_id = type_id(roi.getName())
-        if annotation_type is AnnotationType.SECTION:
-            roi.setName(str(section_id))
-            roi.setStrokeWidth(8)
-        else:
-            roi.setName("")
-            roi.setStrokeWidth(1)
-    IJ.run(
-        "Labels...",
-        (
-            "color=white font="
-            + str(int(wafer.image.getWidth() / 400.0))
-            + " show use draw bold"
-        ),
-    )
-    flattened = wafer.image.flatten()
-    flattened_path = os.path.join(wafer.root, "overview_global.jpg")
-    IJ.save(flattened, flattened_path)
-    dlog("Flattened global image saved to {}".format(flattened_path))
-    flattened.close()
-    wafer.start_global_mode()
-
-
-def handle_key_m_local():
-    """Saves overview"""
-    montageMaker = MontageMaker()
-    stack = wafer.image.getStack()
-    n_slices = wafer.image.getNSlices()
-
-    n_rows = int(n_slices**0.5)
-    n_cols = n_slices // n_rows
-    if n_rows * n_cols < n_slices:
-        n_rows += 1
-
-    # adjust handle/stroke size depending on image dimensions
-    im_w = wafer.image.getWidth()
-    montage_factor = (
-        1 if im_w < LOCAL_SIZE_STANDARD else LOCAL_SIZE_STANDARD / float(im_w)
-    )
-    if im_w < LOCAL_SIZE_STANDARD:
-        handle_size = 5
-        stroke_size = 3
-    else:
-        handle_size = 5 * intr(im_w / LOCAL_SIZE_STANDARD)
-        stroke_size = 3 * im_w / LOCAL_SIZE_STANDARD
-
-    flattened_ims = []
-    for id_serial, section_id in enumerate(wafer.serial_order):
-        im_p = stack.getProcessor(id_serial + 1).duplicate()
-        flattened = ImagePlus("flattened", im_p)
-
-        for roi in wafer.manager.iterator():
-            if "-{:04}".format(section_id) in roi.getName():
-                cloned_roi = roi.clone()
-                cloned_roi.setHandleSize(handle_size)
-                cloned_roi.setStrokeWidth(stroke_size)
-                flattened.setRoi(cloned_roi)
-                flattened = flattened.flatten()
-        flattened.setTitle("section-{:04}".format(section_id))
-        flattened_ims.append(flattened)
-    flattened_stack = ImageStack(
-        flattened_ims[0].getWidth(), flattened_ims[0].getHeight()
-    )
-    for flattened in flattened_ims:
-        flattened_stack.addSlice(flattened.getTitle(), flattened.getProcessor())
-    montage_stack = ImagePlus("Montage", flattened_stack)
-    montage = montageMaker.makeMontage2(
-        montage_stack,
-        n_rows,
-        n_cols,
-        montage_factor,
-        1,
-        montage_stack.getNSlices(),
-        1,
-        3,
-        True,
-    )
-    flattened_path = os.path.join(wafer.root, "overview_local.jpg")
-    IJ.save(montage, flattened_path)
-    del flattened_ims
-    dlog("Flattened local image saved to {}".format(flattened_path))
-
-
-def handle_key_x_local():
-    wafer.remove_current()
-
-
-def handle_key_p_local():
-    """Propagation tool"""
-    manager = wafer.manager
-    manager.runCommand("Update")  # to update the current ROI
-    wafer.manager_to_wafer()
-    selected_indexes = manager.getSelectedIndexes()
-    if len(selected_indexes) != 1:
-        IJ.showMessage(
-            "Warning",
-            "To use the propagation tool, only one annotation should be selected",
-        )
-        return
-    selected_poly = manager.getRoi(selected_indexes[0])
-    poly_name = selected_poly.getName()
-    annotation_type, section_id, annotation_id = type_id(poly_name)
-    if annotation_type is AnnotationType.SECTION:
-        IJ.showMessage(
-            "Info",
-            "Sections cannot be propagated. Only rois, focus, magnets can be propagated",
-        )
-        return
-    min_section_id = min(wafer.sections)
-    max_section_id = max(wafer.sections)
-
-    gd = GenericDialogPlus("Propagation")
-    gd.addMessage(
-        "This {} is defined in section number {}.\nTo what sections do you want to propagate this {}?".format(
-            annotation_type.string, section_id, annotation_type.string
-        )
-    )
-    gd.addStringField(
-        "Enter a range or single values separated by commas. "
-        + "Range can be start-end (4-7 = 4,5,6,7) or "
-        + "start-end-increment (2-11-3 = 2,5,8,11).",
-        "{}-{}".format(min_section_id, max_section_id),
-    )
-    gd.addButton(
-        "All sections {}-{}".format(min_section_id, max_section_id),
-        ButtonClick(),
-    )
-    gd.addButton(
-        "First half of the sections {}-{}".format(
-            min_section_id, intr(max_section_id / 2.0)
-        ),
-        ButtonClick(),
-    )
-    gd.addButton(
-        "Every second section {}-{}-2".format(min_section_id, max_section_id),
-        ButtonClick(),
-    )
-    gd.showDialog()
-    if not gd.wasOKed():
-        return
-    user_range = gd.getNextString()
-    input_indexes = get_indexes_from_user_string(user_range)
-    dlog("User input indexes from Propagation Dialog: {}".format(input_indexes))
-    valid_input_indexes = [i for i in input_indexes if i in wafer.sections]
-    if not valid_input_indexes:
-        return
-
-    with wafer.set_mode(Mode.GLOBAL):
-        if annotation_type is AnnotationType.ROI:
-            annotation_points = wafer.rois[section_id][annotation_id].points
-        else:
-            annotation_points = getattr(wafer, annotation_type.name)[
-                annotation_id
-            ].points
-        for input_index in valid_input_indexes:
-            propagated_points = GeometryCalculator.propagate_points(
-                wafer.sections[section_id].points,
-                annotation_points,
-                wafer.sections[input_index].points,
-            )
-            wafer.add(
-                annotation_type,
-                GeometryCalculator.points_to_poly(propagated_points),
-                (input_index, annotation_id)
-                if annotation_type is AnnotationType.ROI
-                else input_index,
-            )
-    wafer.wafer_to_manager()
-
-
-def propagate_to_next_section():
-    """
-    In local mode, propagates all annotations of the current section
-    to the next serial section
-    """
-
-    manager = wafer.manager
-    manager.runCommand("Update")  # to update the current ROI
-    wafer.manager_to_wafer()
-
-    slice_id = wafer.image.getSlice()
-    section_id = wafer.serial_order[slice_id - 1]
-    try:
-        next_section_id = wafer.serial_order[slice_id]
-    except IndexError:
-        dlog("Cannot propagate to the next section: there is no next section")
-        return
-
-    with wafer.set_mode(Mode.GLOBAL):
-        for annotation_type in AnnotationType.section_annotations():
-            if section_id not in getattr(wafer, annotation_type.name):
-                continue
-            if annotation_type is AnnotationType.ROI:
-                for roi_id, roi in wafer.rois[section_id].iteritems():
-                    propagated_points = GeometryCalculator.propagate_points(
-                        wafer.sections[section_id].points,
-                        roi.points,
-                        wafer.sections[next_section_id].points,
-                    )
-                    wafer.add_roi(
-                        GeometryCalculator.points_to_poly(propagated_points),
-                        (next_section_id, roi_id),
-                    )
+    def handle_key_global(self, keyEvent):
+        keycode = keyEvent.getKeyCode()
+        if keycode == KeyEvent.VK_A:
+            self.handle_key_a()
+        if keycode == KeyEvent.VK_N:
+            self.wafer.renumber_sections()
+        if keycode == KeyEvent.VK_T:
+            if self.wafer.sections:
+                self.wafer.close_mode()
+                self.wafer.start_local_mode()
             else:
-                annotation_points = getattr(wafer, annotation_type.name)[
-                    section_id
-                ].points
-                propagated_points = GeometryCalculator.propagate_points(
-                    wafer.sections[section_id].points,
-                    annotation_points,
-                    wafer.sections[next_section_id].points,
+                IJ.showMessage(
+                    "Cannot toggle to local mode because there are no sections defined."
                 )
-                wafer.add(
+        if keycode == KeyEvent.VK_1:
+            toggle_fill(AnnotationType.SECTION)
+        if keycode == KeyEvent.VK_2:
+            toggle_fill(AnnotationType.ROI)
+        if keycode == KeyEvent.VK_3:
+            toggle_fill(AnnotationType.FOCUS)
+        if keycode == KeyEvent.VK_0:
+            toggle_labels()
+        if keycode == KeyEvent.VK_EQUALS:
+            IJ.run("In [+]")
+        if keycode == KeyEvent.VK_MINUS:
+            IJ.run("Out [-]")
+        if keycode == KeyEvent.VK_UP:
+            move_fov("up", self.wafer)
+        if keycode == KeyEvent.VK_DOWN:
+            move_fov("down", self.wafer)
+        if keycode == KeyEvent.VK_RIGHT:
+            move_fov("right", self.wafer)
+        if keycode == KeyEvent.VK_LEFT:
+            move_fov("left", self.wafer)
+        if keycode == KeyEvent.VK_M:
+            self.handle_key_m_global()
+
+    def handle_key_m_global(self):
+        """Saves overview"""
+        for roi in self.manager.iterator():
+            annotation_type, section_id, annotation_id = type_id(roi.getName())
+            if annotation_type is AnnotationType.SECTION:
+                roi.setName(str(section_id))
+                roi.setStrokeWidth(8)
+            else:
+                roi.setName("")
+                roi.setStrokeWidth(1)
+        IJ.run(
+            "Labels...",
+            (
+                "color=white font="
+                + str(int(self.wafer.image.getWidth() / 400.0))
+                + " show use draw bold"
+            ),
+        )
+        flattened = self.wafer.image.flatten()
+        flattened_path = os.path.join(self.wafer.root, "overview_global.jpg")
+        IJ.save(flattened, flattened_path)
+        dlog("Flattened global image saved to {}".format(flattened_path))
+        flattened.close()
+        self.wafer.start_global_mode()
+
+    def handle_key_local(self, keyEvent):
+        keycode = keyEvent.getKeyCode()
+        if keycode == KeyEvent.VK_A:
+            self.handle_key_a()
+        if keycode == KeyEvent.VK_X:
+            self.handle_key_x_local()
+        if keycode == KeyEvent.VK_P:
+            self.handle_key_p_local()
+        if keycode == KeyEvent.VK_M:
+            self.handle_key_m_local()
+        if keycode == KeyEvent.VK_D:
+            move_roi_manager_selection(-1)
+        if keycode == KeyEvent.VK_F:
+            move_roi_manager_selection(1)
+        if keycode == KeyEvent.VK_C:
+            move_roi_manager_selection(-10)
+        if keycode == KeyEvent.VK_V:
+            move_roi_manager_selection(10)
+        if keycode in (KeyEvent.VK_E, KeyEvent.VK_R):
+            self.handle_keys_e_r(keycode)
+        if keycode == KeyEvent.VK_T:
+            self.wafer.close_mode()
+            self.wafer.start_global_mode()
+        if keycode == KeyEvent.VK_G:
+            self.propagate_to_next_section()
+        keyEvent.consume()
+
+    def handle_keys_e_r(self, keycode):
+        selectedIndex = self.manager.getSelectedIndex()
+        if selectedIndex != -1:
+            self.manager.runCommand("Update")
+        set_roi_and_update_roi_manager(
+            0 if keycode == KeyEvent.E else self.manager.getCount() - 1
+        )
+
+    def handle_key_a(self):
+        drawn_roi = self.wafer.image.getRoi()
+        if not drawn_roi:
+            IJ.showMessage("Info", MSG_DRAWN_ROI_MISSING)
+            return
+        if drawn_roi.getState() is PolygonRoi.CONSTRUCTING and drawn_roi.size() > 3:
+            return
+
+        name_suggestions = []
+        if self.wafer.mode is Mode.LOCAL:
+            section_id = self.wafer.serial_order[self.wafer.image.getSlice() - 1]
+            if drawn_roi.size() == 2:
+                name_suggestions.append("magnet-{:04}".format(section_id))
+            else:
+                name_suggestions.append("section-{:04}".format(section_id))
+                name_suggestions += self.wafer.suggest_roi_ids(section_id)
+            name_suggestions.append("focus-{:04}".format(section_id))
+        elif self.wafer.mode is Mode.GLOBAL:
+            closest_sections = self.wafer.get_closest(
+                AnnotationType.SECTION, drawn_roi.getContourCentroid()
+            )
+            if drawn_roi.size() == 2:
+                name_suggestions += [
+                    "magnet-{:04}".format(section.id_)
+                    for section in closest_sections[:3]
+                ]
+                name_suggestions += [
+                    "landmark-{:04}".format(id)
+                    for id in self.wafer.suggest_annotation_ids(AnnotationType.LANDMARK)
+                ]
+            else:
+                name_suggestions += [
+                    "section-{:04}".format(id)
+                    for id in self.wafer.suggest_annotation_ids(AnnotationType.SECTION)
+                ]
+                name_suggestions += [
+                    name_suggestion
+                    for section in closest_sections[:3]
+                    for name_suggestion in self.wafer.suggest_roi_ids(section.id_)
+                ]
+
+        annotation_name = annotation_name_validation_dialog(name_suggestions)
+        if annotation_name is None:
+            return
+
+        points = GeometryCalculator.poly_to_points(drawn_roi)
+        # handle cases when the drawn_roi is not closed
+        if drawn_roi.getState() == PolygonRoi.CONSTRUCTING:
+            if drawn_roi.size() == 3:
+                drawn_roi = PolygonRoi(
+                    [point[0] for point in points[:-1]],
+                    [point[1] for point in points[:-1]],
+                    PolygonRoi.POLYLINE,
+                )
+            elif drawn_roi.size() == 2:
+                drawn_roi = PointRoi(*points[0])
+
+        drawn_roi.setName(annotation_name)
+        annotation_type, section_id, annotation_id = type_id(annotation_name)
+        if self.wafer.mode is Mode.LOCAL:
+            drawn_roi.setHandleSize(annotation_type.handle_size_local)
+        else:
+            drawn_roi.setHandleSize(annotation_type.handle_size_global)
+        if annotation_type is AnnotationType.ROI:
+            self.wafer.add_roi(drawn_roi, (section_id, annotation_id))
+        else:
+            self.wafer.add(annotation_type, drawn_roi, annotation_id)
+        drawn_roi.setStrokeColor(annotation_type.color)
+        self.wafer.image.killRoi()
+        self.wafer.wafer_to_manager()
+
+        if self.wafer.mode is Mode.LOCAL:
+            # select the drawn_roi
+            self.manager.select(get_roi_index_by_name(annotation_name))
+        else:
+            roi_manager_scroll_bottom()
+        dlog("Annotation {} added".format(annotation_name))
+
+    def handle_key_m_local(self):
+        """Saves overview"""
+        montageMaker = MontageMaker()
+        stack = self.wafer.image.getStack()
+        n_slices = self.wafer.image.getNSlices()
+        n_rows, n_cols = get_square_row_col(n_slices)
+
+        # adjust handle/stroke size depending on image dimensions
+        im_w = self.wafer.image.getWidth()
+        montage_factor = (
+            1 if im_w < LOCAL_SIZE_STANDARD else LOCAL_SIZE_STANDARD / float(im_w)
+        )
+        if im_w < LOCAL_SIZE_STANDARD:
+            handle_size = 5
+            stroke_size = 3
+        else:
+            handle_size = 5 * intr(im_w / LOCAL_SIZE_STANDARD)
+            stroke_size = 3 * im_w / LOCAL_SIZE_STANDARD
+
+        flattened_ims = []
+        for id_serial, section_id in enumerate(self.wafer.serial_order):
+            im_p = stack.getProcessor(id_serial + 1).duplicate()
+            flattened = ImagePlus("flattened", im_p)
+
+            for roi in self.manager.iterator():
+                if "-{:04}".format(section_id) in roi.getName():
+                    cloned_roi = roi.clone()
+                    cloned_roi.setHandleSize(handle_size)
+                    cloned_roi.setStrokeWidth(stroke_size)
+                    flattened.setRoi(cloned_roi)
+                    flattened = flattened.flatten()
+            flattened.setTitle("section-{:04}".format(section_id))
+            flattened_ims.append(flattened)
+        flattened_stack = ImageStack(
+            flattened_ims[0].getWidth(), flattened_ims[0].getHeight()
+        )
+        for flattened in flattened_ims:
+            flattened_stack.addSlice(flattened.getTitle(), flattened.getProcessor())
+        montage_stack = ImagePlus("Montage", flattened_stack)
+        montage = montageMaker.makeMontage2(
+            montage_stack,
+            n_rows,
+            n_cols,
+            montage_factor,
+            1,
+            montage_stack.getNSlices(),
+            1,
+            3,
+            True,
+        )
+        flattened_path = os.path.join(self.wafer.root, "overview_local.jpg")
+        IJ.save(montage, flattened_path)
+        del flattened_ims
+        dlog("Flattened local image saved to {}".format(flattened_path))
+
+    def handle_key_x_local(self):
+        self.wafer.remove_current()
+
+    def handle_key_p_local(self):
+        """Propagation tool"""
+        self.manager.runCommand("Update")  # update the current ROI
+        self.wafer.manager_to_wafer()
+        selected_indexes = self.manager.getSelectedIndexes()
+        if len(selected_indexes) != 1:
+            IJ.showMessage(
+                "Warning", "Select only one annotation to use the propagation tool"
+            )
+            return
+        selected_poly = self.manager.getRoi(selected_indexes[0])
+        poly_name = selected_poly.getName()
+        annotation_type, section_id, annotation_id = type_id(poly_name)
+        if annotation_type is AnnotationType.SECTION:
+            IJ.showMessage(
+                "Info",
+                "Sections cannot be propagated. Only rois, focus, magnets can be propagated",
+            )
+            return
+        min_section_id = min(self.wafer.sections)
+        max_section_id = max(self.wafer.sections)
+
+        gd = GenericDialogPlus("Propagation")
+        gd.addMessage(
+            (
+                "This {} is defined in section #{}."
+                "\nTo what sections do you want to propagate this {}?"
+            ).format(annotation_type.string, section_id, annotation_type.string)
+        )
+        gd.addStringField(
+            "Enter a range or single values separated by commas. "
+            + "Range can be start-end (4-7 = 4,5,6,7) or "
+            + "start-end-increment (2-11-3 = 2,5,8,11).",
+            "{}-{}".format(min_section_id, max_section_id),
+        )
+        gd.addButton(
+            "All sections {}-{}".format(min_section_id, max_section_id),
+            ButtonClick(),
+        )
+        gd.addButton(
+            "First half of the sections {}-{}".format(
+                min_section_id, intr(max_section_id / 2.0)
+            ),
+            ButtonClick(),
+        )
+        gd.addButton(
+            "Every second section {}-{}-2".format(min_section_id, max_section_id),
+            ButtonClick(),
+        )
+        gd.showDialog()
+        if not gd.wasOKed():
+            return
+        user_range = gd.getNextString()
+        input_indexes = get_indexes_from_user_string(user_range)
+        dlog("User input indexes from Propagation Dialog: {}".format(input_indexes))
+        valid_input_indexes = [i for i in input_indexes if i in self.wafer.sections]
+        if not valid_input_indexes:
+            return
+
+        with self.wafer.set_mode(Mode.GLOBAL):
+            if annotation_type is AnnotationType.ROI:
+                annotation_points = self.wafer.rois[section_id][annotation_id].points
+            else:
+                annotation_points = getattr(self.wafer, annotation_type.name)[
+                    annotation_id
+                ].points
+            for input_index in valid_input_indexes:
+                propagated_points = GeometryCalculator.propagate_points(
+                    self.wafer.sections[section_id].points,
+                    annotation_points,
+                    self.wafer.sections[input_index].points,
+                )
+                self.wafer.add(
                     annotation_type,
                     GeometryCalculator.points_to_poly(propagated_points),
-                    next_section_id,
+                    (input_index, annotation_id)
+                    if annotation_type is AnnotationType.ROI
+                    else input_index,
                 )
-    wafer.wafer_to_manager()
-    select_roi_by_name(str(wafer.sections[next_section_id]))
+        self.wafer.wafer_to_manager()
+
+    def propagate_to_next_section(self):
+        """
+        In local mode, propagates all annotations of the current section
+        to the next serial section
+        """
+        self.manager.runCommand("Update")
+        self.wafer.manager_to_wafer()
+
+        slice_id = self.wafer.image.getSlice()
+        section_id = self.wafer.serial_order[slice_id - 1]
+        try:
+            next_section_id = self.wafer.serial_order[slice_id]
+        except IndexError:
+            dlog("Cannot propagate to the next section: there is no next section")
+            return
+
+        with self.wafer.set_mode(Mode.GLOBAL):
+            for annotation_type in AnnotationType.section_annotations():
+                if section_id not in getattr(self.wafer, annotation_type.name):
+                    continue
+                if annotation_type is AnnotationType.ROI:
+                    for roi_id, roi in self.wafer.rois[section_id].iteritems():
+                        propagated_points = GeometryCalculator.propagate_points(
+                            self.wafer.sections[section_id].points,
+                            roi.points,
+                            self.wafer.sections[next_section_id].points,
+                        )
+                        self.wafer.add_roi(
+                            GeometryCalculator.points_to_poly(propagated_points),
+                            (next_section_id, roi_id),
+                        )
+                else:
+                    annotation_points = getattr(self.wafer, annotation_type.name)[
+                        section_id
+                    ].points
+                    propagated_points = GeometryCalculator.propagate_points(
+                        self.wafer.sections[section_id].points,
+                        annotation_points,
+                        self.wafer.sections[next_section_id].points,
+                    )
+                    self.wafer.add(
+                        annotation_type,
+                        GeometryCalculator.points_to_poly(propagated_points),
+                        next_section_id,
+                    )
+        self.wafer.wafer_to_manager()
+        select_roi_by_name(str(self.wafer.sections[next_section_id]))
 
 
-def handle_key_a():
-    drawn_roi = wafer.image.getRoi()
-    if not drawn_roi:
-        IJ.showMessage(
-            "Info",
-            MSG_DRAWN_ROI_MISSING,
-        )
-        return
-    if drawn_roi.getState() is PolygonRoi.CONSTRUCTING and drawn_roi.size() > 3:
-        return
-
-    name_suggestions = []
-    if wafer.mode is Mode.LOCAL:
-        section_id = wafer.serial_order[wafer.image.getSlice() - 1]
-        if drawn_roi.size() == 2:
-            name_suggestions.append("magnet-{:04}".format(section_id))
-        else:
-            name_suggestions.append("section-{:04}".format(section_id))
-            name_suggestions += wafer.suggest_roi_ids(section_id)
-        name_suggestions.append("focus-{:04}".format(section_id))
-    elif wafer.mode is Mode.GLOBAL:
-        closest_sections = wafer.get_closest(
-            AnnotationType.SECTION, drawn_roi.getContourCentroid()
-        )
-        if drawn_roi.size() == 2:
-            name_suggestions += [
-                "magnet-{:04}".format(section.id_) for section in closest_sections[:3]
-            ]
-            name_suggestions += [
-                "landmark-{:04}".format(id)
-                for id in wafer.suggest_annotation_ids(AnnotationType.LANDMARK)
-            ]
-        else:
-            name_suggestions += [
-                "section-{:04}".format(id)
-                for id in wafer.suggest_annotation_ids(AnnotationType.SECTION)
-            ]
-            name_suggestions += [
-                name_suggestion
-                for section in closest_sections[:3]
-                for name_suggestion in wafer.suggest_roi_ids(section.id_)
-            ]
-
-    annotation_name = annotation_name_validation_dialog(name_suggestions)
-    if annotation_name is None:
-        return
-
-    points = GeometryCalculator.poly_to_points(drawn_roi)
-    # handle cases when the drawn_roi is not closed
-    if drawn_roi.getState() == PolygonRoi.CONSTRUCTING:
-        if drawn_roi.size() == 3:
-            drawn_roi = PolygonRoi(
-                [point[0] for point in points[:-1]],
-                [point[1] for point in points[:-1]],
-                PolygonRoi.POLYLINE,
-            )
-        elif drawn_roi.size() == 2:
-            drawn_roi = PointRoi(*points[0])
-
-    drawn_roi.setName(annotation_name)
-    annotation_type, section_id, annotation_id = type_id(annotation_name)
-    if wafer.mode is Mode.LOCAL:
-        drawn_roi.setHandleSize(annotation_type.handle_size_local)
-    else:
-        drawn_roi.setHandleSize(annotation_type.handle_size_global)
-    if annotation_type is AnnotationType.ROI:
-        wafer.add_roi(drawn_roi, (section_id, annotation_id))
-    else:
-        wafer.add(annotation_type, drawn_roi, annotation_id)
-    drawn_roi.setStrokeColor(annotation_type.color)
-    wafer.image.killRoi()
-    wafer.wafer_to_manager()
-
-    if wafer.mode is Mode.LOCAL:
-        # select the drawn_roi
-        wafer.manager.select(get_roi_index_by_name(annotation_name))
-    else:
-        roi_manager_scroll_bottom()
-    dlog("Annotation {} added".format(annotation_name))
-
-
-def move_fov(a):
+def move_fov(a, wafer):
     """Moves field of view of the image"""
     im = wafer.image
     canvas = im.getCanvas()
     r = canvas.getSrcRect()
     # adjust increment depending on zoom level
     increment = intr(40 / float(canvas.getMagnification()))
-    xPixelIncrement = 0
-    yPixelIncrement = 0
+    xPixelIncrement, yPixelIncrement = 0
     if a == "right":
         xPixelIncrement = increment
     elif a == "left":
@@ -2082,19 +2048,14 @@ def move_fov(a):
         yPixelIncrement = increment
     elif a == "up":
         yPixelIncrement = -increment
-    newR = Rectangle(
+    new_rectangle = Rectangle(
         min(max(0, r.x + xPixelIncrement), im.getWidth() - r.width),
         min(max(0, r.y + yPixelIncrement), im.getHeight() - r.height),
         r.width,
         r.height,
     )
-    canvas.setSourceRect(newR)
+    canvas.setSourceRect(new_rectangle)
     im.updateAndDraw()
-
-
-def intr(x):
-    """Float to int with rounding (instead of int(x) that does a floor)"""
-    return int(round(x))
 
 
 def get_name(text, default_name="", cancel_msg=None):
@@ -2124,7 +2085,7 @@ def get_indexes_from_user_string(userString):
     """
     userString = userString.replace(" ", "")
     if "," in userString and "." in userString:
-        return None
+        return
     elif "," in userString:
         splitIndexes = [
             int(splitIndex)
@@ -2140,28 +2101,22 @@ def get_indexes_from_user_string(userString):
             if splitIndex.isdigit()
         ]
         if len(splitIndexes) == 2 or len(splitIndexes) == 3:
-            splitIndexes[1] = (
-                splitIndexes[1] + 1
-            )  # inclusive is more natural (2-5 = 2,3,4,5)
+            splitIndexes[1] = splitIndexes[1] + 1
             return range(*splitIndexes)
     elif userString.isdigit():
         return [int(userString)]
-    return None
+    return
 
 
 def show_dialog(title, subtitle, suggestions, id_default):
     gd = GenericDialog(title)
     gd.addRadioButtonGroup(
-        subtitle,
-        suggestions,
-        len(suggestions),
-        1,
-        suggestions[id_default],
+        subtitle, suggestions, len(suggestions), 1, suggestions[id_default]
     )
     focus_on_ok(gd)
     gd.showDialog()
     if gd.wasCanceled():
-        return None
+        return
     return gd.getRadioButtonGroups()[0].getSelectedCheckbox()
 
 
@@ -2174,9 +2129,9 @@ def annotation_name_validation_dialog(name_suggestions):
     )
     if not checkbox:
         dlog("No selection made: the section was not added")
-        return None
+        return
     if checkbox is None:
-        return None
+        return
     return checkbox.label
 
 
@@ -2211,13 +2166,11 @@ def get_roi_manager():
 
 
 def init_manager():
-    # get, place, and reset the ROIManager
+    """gets, places, resets the ROIManager"""
     manager = get_roi_manager()
     manager.setTitle("Annotations")
     manager.reset()
-    manager.setSize(
-        250, intr(0.95 * IJ.getScreenSize().height)
-    )  # 280 so that the title is not cut
+    manager.setSize(250, intr(0.95 * IJ.getScreenSize().height))
     manager.setLocation(IJ.getScreenSize().width - manager.getSize().width, 0)
     return manager
 
@@ -2254,12 +2207,13 @@ def move_roi_manager_selection(n):
 
 
 def delete_selected_roi():
-    wafer.manager.runCommand("Delete")
+    get_roi_manager().runCommand("Delete")
 
 
 def delete_roi_by_index(index):
-    wafer.manager.select(index)
-    wafer.manager.runCommand("Delete")
+    manager = get_roi_manager()
+    manager.select(index)
+    manager.runCommand("Delete")
 
 
 def select_roi_by_name(roi_name):
@@ -2303,7 +2257,7 @@ def get_roi_index_from_current_slice():
     if roi_index == -1:
         if manager.getCount() > 0:
             return 0
-        return None
+        return
     return roi_index
 
 
@@ -2313,11 +2267,11 @@ def get_roi_index_by_name(name):
         index = [manager.getName(i) for i in range(manager.getCount())].index(name)
         return index
     except ValueError as e:
-        return None
+        return
 
 
 def toggle_fill(annotation_type):
-    manager = wafer.manager
+    manager = get_roi_manager()
     for roi in manager.iterator():
         if annotation_type.string in roi.getName():
             if roi.getFillColor():
@@ -2328,11 +2282,15 @@ def toggle_fill(annotation_type):
 
 
 def toggle_labels():
-    if wafer.manager.getDrawLabels():
-        wafer.manager.runCommand("Show All without labels")
+    manager = get_roi_manager()
+    if manager.getDrawLabels():
+        manager.runCommand("Show All without labels")
     else:
-        wafer.manager.runCommand("UseNames", "true")
-        wafer.manager.runCommand("Show All with labels")
+        manager.runCommand("UseNames", "true")
+        manager.runCommand("Show All with labels")
+
+
+# ----- End RoiManager functions ----- #
 
 
 def type_id(
@@ -2362,8 +2320,7 @@ def suggest_ids(ids):
     return sorted(set(range(max(ids) + 2)) - set(ids))
 
 
-# ----- End RoiManager functions ----- #
-# ----- HTML functions for help message ----- #
+# convenience functions for HTML help message
 def tag(text, tag):
     return "<{}>{}</{}>".format(tag, text, tag)
 
@@ -2374,17 +2331,6 @@ def print_list(*elements):
         a += "<li>{}</li>".format(s)
     a += "</ul>"
     return a
-
-
-# ----- End HTML functions for help message ----- #
-
-
-def pairwise(iterable):
-    """from https://docs.python.org/3/library/itertools.html#itertools.pairwise
-    'ABCD' --> AB BC CD"""
-    a, b = itertools.tee(iterable)
-    next(b, None)
-    return zip(a, b)
 
 
 if __name__ == "__main__":
