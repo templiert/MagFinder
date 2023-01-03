@@ -798,17 +798,6 @@ class Wafer(object):
             )
             if not get_OK(message):
                 return
-            if self.image.getNSlices() == 1:
-                if get_OK(
-                    "Case not yet handled: you are trying to delete the only existing section."
-                    "\n\nThe plugin will close. Please delete the .magc file"
-                    " and start over from scratch instead.\n\nContinue?"
-                ):
-                    self.image.close()
-                    self.manager.close()
-                    sys.exit()
-                else:
-                    return
             self.image.killRoi()
             # delete linked annotations in manager and in wafer
             for linked_annotation in linked_annotations:
@@ -839,13 +828,15 @@ class Wafer(object):
             self.image.close()
             self.manager.reset()
 
-            self.start_local_mode()
-
-            # select the next section
-            if section_id_manager < self.manager.getCount():
-                set_roi_and_update_roi_manager(section_id_manager)
+            if len(self) == 0:
+                self.start_global_mode()
             else:
-                set_roi_and_update_roi_manager(self.manager.getCount() - 1)
+                self.start_local_mode()
+                # select the next section
+                if section_id_manager < self.manager.getCount():
+                    set_roi_and_update_roi_manager(section_id_manager)
+                else:
+                    set_roi_and_update_roi_manager(self.manager.getCount() - 1)
 
     def init_images_global(self):
         if self.image_path is None:
