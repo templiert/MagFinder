@@ -769,11 +769,11 @@ class Wafer(object):
                     del getattr(self, annotation_type.name)[annotation_id]
                 # select the section
                 self.manager.select(
-                    get_roi_index_by_name(str(self.sections[section_id]))
+                    get_roi_index_from_name(str(self.sections[section_id]))
                 )
         elif annotation_type is AnnotationType.SECTION:
             # deleting a sections also deletes the linked annotations (roi(s),focus,magnet)
-            section_id_manager = get_roi_index_by_name(str(self.sections[section_id]))
+            section_id_manager = get_roi_index_from_name(str(self.sections[section_id]))
             linked_annotations = []
             message = ""
             # build the message by screening all existing linked annotations
@@ -802,7 +802,7 @@ class Wafer(object):
             # delete linked annotations in manager and in wafer
             for linked_annotation in linked_annotations:
                 # delete in roimanager
-                index = get_roi_index_by_name(str(linked_annotation))
+                index = get_roi_index_from_name(str(linked_annotation))
                 delete_roi_by_index(index)
 
                 # delete in wafer
@@ -814,7 +814,7 @@ class Wafer(object):
                 else:
                     del getattr(self, linked_annotation.type_.name)[section_id]
             # delete section in manager
-            section_id_manager = get_roi_index_by_name(str(self.sections[section_id]))
+            section_id_manager = get_roi_index_from_name(str(self.sections[section_id]))
             delete_roi_by_index(section_id_manager)
             # update the orders
             del self.serial_order[self.serial_order.index(section_id)]
@@ -1826,7 +1826,7 @@ class KeyListener(KeyAdapter):
 
         if self.wafer.mode is Mode.LOCAL:
             # select the drawn_roi
-            self.manager.select(get_roi_index_by_name(annotation_name))
+            self.manager.select(get_roi_index_from_name(annotation_name))
         else:
             roi_manager_scroll_bottom()
         dlog("Annotation {} added".format(annotation_name))
@@ -1869,22 +1869,26 @@ class KeyListener(KeyAdapter):
         )
         for flattened in flattened_ims:
             flattened_stack.addSlice(flattened.getTitle(), flattened.getProcessor())
-        montage_stack = ImagePlus("Montage", flattened_stack)
+        im_flattened_stack = ImagePlus("flattened_stack", flattened_stack)
+        path_flattened_stack = os.path.join(self.wafer.root, "annotated_stack.tif")
+        IJ.save(im_flattened_stack, path_flattened_stack)
         montage = montageMaker.makeMontage2(
-            montage_stack,
+            im_flattened_stack,
             n_rows,
             n_cols,
             montage_factor,
             1,
-            montage_stack.getNSlices(),
+            im_flattened_stack.getNSlices(),
             1,
             3,
             True,
         )
-        flattened_path = os.path.join(self.wafer.root, "overview_local.jpg")
-        IJ.save(montage, flattened_path)
+        path_overview_local = os.path.join(self.wafer.root, "overview_local.jpg")
+        IJ.save(montage, path_overview_local)
         del flattened_ims
-        dlog("Flattened local image saved to {}".format(flattened_path))
+        montage.close()
+        im_flattened_stack.close()
+        dlog("Flattened local image saved to {}".format(path_overview_local))
 
     def handle_key_x_local(self):
         self.wafer.remove_current()
@@ -2016,7 +2020,7 @@ class KeyListener(KeyAdapter):
                         next_section_id,
                     )
         self.wafer.wafer_to_manager()
-        select_roi_by_name(str(self.wafer.sections[next_section_id]))
+        select_roi_from_name(str(self.wafer.sections[next_section_id]))
 
 
 def move_fov(d, wafer):
@@ -2148,13 +2152,6 @@ def focus_on_ok(dialog):
 
 
 # ----- RoiManager functions ----- #
-def get_roi_manager():
-    manager = RoiManager.getInstance()
-    if manager is None:
-        manager = RoiManager()
-    return manager
-
-
 def init_manager():
     """gets, places, resets the ROIManager"""
     manager = get_roi_manager()
@@ -2162,6 +2159,13 @@ def init_manager():
     manager.reset()
     manager.setSize(250, intr(0.95 * IJ.getScreenSize().height))
     manager.setLocation(IJ.getScreenSize().width - manager.getSize().width, 0)
+    return manager
+
+
+def get_roi_manager():
+    manager = RoiManager.getInstance()
+    if manager is None:
+        manager = RoiManager()
     return manager
 
 
@@ -2206,10 +2210,25 @@ def delete_roi_by_index(index):
     manager.runCommand("Delete")
 
 
-def select_roi_by_name(roi_name):
+def get_roi_from_name(roi_name):
     manager = get_roi_manager()
-    roi_index = [roi.getName() for roi in manager.getRoisAsArray()].index(roi_name)
-    manager.select(roi_index)
+    for roi in manager.getRoisAsArray():
+        if roi.getName() == roi_name:
+            return roi
+
+
+def get_roi_index_from_name(name):
+    manager = get_roi_manager()
+    for id_roi, roi in enumerate(manager.getRoisAsArray()):
+        if roi.getName() == name:
+            return id_roi
+
+
+def select_roi_from_name(roi_name):
+    manager = get_roi_manager()
+    for id_roi, roi in enumerate(manager.getRoisAsArray()):
+        if roi.getName() == roi_name:
+            manager.select(id_roi)
 
 
 def set_roi_and_update_roi_manager(roi_index, select=True):
@@ -2249,15 +2268,6 @@ def get_roi_index_from_current_slice():
             return 0
         return
     return roi_index
-
-
-def get_roi_index_by_name(name):
-    manager = wafer.manager
-    try:
-        index = [manager.getName(i) for i in range(manager.getCount())].index(name)
-        return index
-    except ValueError as e:
-        return
 
 
 def toggle_fill(annotation_type):
