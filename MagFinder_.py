@@ -1757,7 +1757,7 @@ class KeyListener(KeyAdapter):
         if selectedIndex != -1:
             self.manager.runCommand("Update")
         set_roi_and_update_roi_manager(
-            0 if keycode == KeyEvent.E else self.manager.getCount() - 1
+            0 if keycode == KeyEvent.VK_E else self.manager.getCount() - 1
         )
 
     def handle_key_a(self):
