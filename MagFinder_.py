@@ -102,6 +102,11 @@ def get_square_row_col(n):
     return n_rows, n_cols
 
 
+class Neighbor(object):
+    PREVIOUS = "previous"
+    NEXT = "next"
+
+
 class Direction(object):
     """Enum for directions"""
 
@@ -1742,7 +1747,9 @@ class KeyListener(KeyAdapter):
             self.wafer.close_mode()
             self.wafer.start_global_mode()
         if keycode == KeyEvent.VK_G:
-            self.propagate_to_next_section()
+            self.propagate_to_neighbor_section(
+                neighbor=Neighbor.PREVIOUS if keyEvent.isShiftDown() else Neighbor.NEXT
+            )
         keyEvent.consume()
 
     def handle_keys_e_r(self, keycode):
@@ -1974,7 +1981,7 @@ class KeyListener(KeyAdapter):
                 )
         self.wafer.wafer_to_manager()
 
-    def propagate_to_next_section(self):
+    def propagate_to_neighbor_section(self, neighbor):
         """
         In local mode, propagates all annotations of the current section
         to the next serial section
@@ -1985,9 +1992,15 @@ class KeyListener(KeyAdapter):
         slice_id = self.wafer.image.getSlice()
         section_id = self.wafer.serial_order[slice_id - 1]
         try:
-            next_section_id = self.wafer.serial_order[slice_id]
+            id_section_neighbor = self.wafer.serial_order[
+                slice_id if neighbor is Neighbor.NEXT else slice_id - 2
+            ]
         except IndexError:
-            dlog("Cannot propagate to the next section: there is no next section")
+            dlog(
+                "Cannot propagate to the {} section: there is no {} section".format(
+                    neighbor, neighbor
+                )
+            )
             return
 
         with self.wafer.set_mode(Mode.GLOBAL):
@@ -1999,11 +2012,11 @@ class KeyListener(KeyAdapter):
                         propagated_points = GeometryCalculator.propagate_points(
                             self.wafer.sections[section_id].points,
                             roi.points,
-                            self.wafer.sections[next_section_id].points,
+                            self.wafer.sections[id_section_neighbor].points,
                         )
                         self.wafer.add_roi(
                             GeometryCalculator.points_to_poly(propagated_points),
-                            (next_section_id, roi_id),
+                            (id_section_neighbor, roi_id),
                         )
                 else:
                     annotation_points = getattr(self.wafer, annotation_type.name)[
@@ -2012,15 +2025,15 @@ class KeyListener(KeyAdapter):
                     propagated_points = GeometryCalculator.propagate_points(
                         self.wafer.sections[section_id].points,
                         annotation_points,
-                        self.wafer.sections[next_section_id].points,
+                        self.wafer.sections[id_section_neighbor].points,
                     )
                     self.wafer.add(
                         annotation_type,
                         GeometryCalculator.points_to_poly(propagated_points),
-                        next_section_id,
+                        id_section_neighbor,
                     )
         self.wafer.wafer_to_manager()
-        select_roi_from_name(str(self.wafer.sections[next_section_id]))
+        select_roi_from_name(str(self.wafer.sections[id_section_neighbor]))
 
 
 def move_fov(d, wafer):
@@ -2413,6 +2426,7 @@ if __name__ == "__main__":
             "[t] toggles to global mode",
             "[p] propagates the current annotation to sections defined in the dialog. Section and landmark annotations cannot be propagated",
             "[g] propagates all annotations of the current section to the next serial section and moves to the next serial section",
+            "[G] (=shift + [g]) propagates all annotations of the current section to the previous serial section and moves to the previous serial section",
             "[q] quits. Everything will be saved",
             "[s] saves to file (happens already automatically when toggling [t] or quitting [q])",
             "[m] exports a summary montage",
