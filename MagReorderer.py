@@ -503,7 +503,13 @@ def open_subpixel_crop(im_path, x, y, w, h, channel):
     IJ.run(
         im,
         "Translate...",
-        "x={} y={} interpolation=Bilinear".format(int(x) - x, int(y) - y),
+        " ".join(
+            (
+                "x={}".format(int(x) - x),
+                "y={}".format(int(y) - y),
+                "interpolation=Bilinear",
+            )
+        ),
     )
     return crop(im, Roi(0, 0, w, h))
 
@@ -634,7 +640,7 @@ class MagReorderer(object):
             "\n    -the extracted rois in the folder."
             "\n    -the number of features and matches found in the log"
         )
-        gd.addCheckbox("normalize local contrast", False)
+        gd.addCheckbox("normalize local contrast", True)
         gd.addNumericField("window size for normalize local contrast ", 100, 0)
         gd.addMessage("-" * 150)
         gd.addMessage(
@@ -656,7 +662,7 @@ class MagReorderer(object):
         gd.addNumericField("minimum octave size", 32, 0)
         gd.addNumericField("maximum octave size", 1500, 0)
         gd.addMessage("-" * 150)
-        gd.addCheckbox("export high resolution stack", False)
+        gd.addCheckbox("export high resolution stack", True)
         gd.showDialog()
         if gd.wasCanceled():
             return
@@ -1002,30 +1008,46 @@ class MagReorderer(object):
 
     def align_sections(self):
         """Realigns the sections based on the transforms found during reordering"""
-        (
-            _,
-            affine_transforms,
-        ) = deserialize_matching_outputs(self.neighbor_fine_sift_matches)
+        affine_transforms = deserialize_matching_outputs(
+            self.neighbor_fine_sift_matches
+        )[1]
 
         scale_upsampling = AffineTransform2D()
         scale_upsampling.scale(self.downsampling_factor)
 
-        translation_center_high_res_fov = AffineTransform2D()
-        translation_center_high_res_fov.translate(2 * [float(self.highres_w / 2)])
+        translation_zero_to_half_highres_fov = AffineTransform2D()
+        translation_zero_to_half_highres_fov.translate(2 * [0.5 * self.highres_w])
 
         k1 = self.wafer.serial_order[0]
 
-        translation_centroid = AffineTransform2D()
-        translation_centroid.translate(
+        translation_section_to_roi = AffineTransform2D()
+        translation_section_to_roi.translate(
+            [
+                self.wafer.rois[k1][0].centroid[0]
+                - self.wafer.sections[k1].centroid[0],
+                self.wafer.rois[k1][0].centroid[1]
+                - self.wafer.sections[k1].centroid[1],
+            ]
+        )
+
+        # translation global section centroid
+        translation_centroid_to_zero = AffineTransform2D()
+        translation_centroid_to_zero.translate(
             [
                 -self.wafer.sections[k1].centroid[0],
                 -self.wafer.sections[k1].centroid[1],
             ]
         )
+
+        # section transform:
+        # global section lowres -> local section highres
+        # 1. translate to center
+        # 2. scale up
+        # 3. translate half window
         section_transform = AffineTransform2D()
-        section_transform.preConcatenate(translation_centroid)
+        section_transform.preConcatenate(translation_centroid_to_zero)
         section_transform.preConcatenate(scale_upsampling)
-        section_transform.preConcatenate(translation_center_high_res_fov)
+        section_transform.preConcatenate(translation_zero_to_half_highres_fov)
 
         reference_local_high_res_section = self.GC.transform_points(
             self.wafer.sections[k1].points,
@@ -1035,6 +1057,7 @@ class MagReorderer(object):
             self.wafer.rois[k1][0].points,
             section_transform,
         )
+
         # cumulative_local_transform
         # 1. it is updated as we go from pair to pair
         # 2. it transforms the local low-res image of a section
@@ -1049,16 +1072,16 @@ class MagReorderer(object):
             o2 = sorted_section_keys.index(k2)
 
             # compute pair_local_transform:
-            # it transforms the local view image of one section
-            # to the previous serial section (at high resolution)
+            # it transforms the local view image of one ROI
+            # to the previous ROI, in serial order, at high resolution
             if (o2, o1) not in affine_transforms:
                 # bad case: these two sections are supposed to be consecutive
-                # as determined by the section order, but no match
-                # has been found between these two.
+                # as determined by the section order
+                # but no match has been found between their ROIs.
                 # Use identity transform instead.
                 dlog(
-                    "Warning: transform missing in "
-                    " the pair of sections {}".format((o2, o1))
+                    "Warning: transform missing for"
+                    " this pair of sections {}".format((o2, o1))
                 )
                 pair_local_transform = AffineTransform2D()
             else:
@@ -1077,8 +1100,8 @@ class MagReorderer(object):
             # concatenate cumulative_local_transform
             cumulative_local_transform.preConcatenate(pair_local_transform)
 
-            translation_centroid = AffineTransform2D()
-            translation_centroid.translate(
+            translation_centroid_to_zero = AffineTransform2D()
+            translation_centroid_to_zero.translate(
                 [
                     -self.wafer.sections[k2].centroid[0],
                     -self.wafer.sections[k2].centroid[1],
@@ -1086,9 +1109,11 @@ class MagReorderer(object):
             )
             section_transform = AffineTransform2D()
             section_transform.preConcatenate(cumulative_local_transform)
-            section_transform.preConcatenate(translation_center_high_res_fov.inverse())
+            section_transform.preConcatenate(
+                translation_zero_to_half_highres_fov.inverse()
+            )
             section_transform.preConcatenate(scale_upsampling.inverse())
-            section_transform.preConcatenate(translation_centroid.inverse())
+            section_transform.preConcatenate(translation_centroid_to_zero.inverse())
             self.wafer.update_section(
                 k2,
                 section_transform,
