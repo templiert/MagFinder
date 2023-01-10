@@ -499,7 +499,8 @@ def crop_open(im_path, x, y, w, h, channel):
 
 def open_subpixel_crop(im_path, x, y, w, h, channel):
     """Opens only the given ROI with subpixel accuracy. See crop_open"""
-    im = crop_open(im_path, int(x), int(y), w + 1, h + 1, channel)
+    # im = crop_open(im_path, int(x), int(y), w + 1, h + 1, channel)
+    im = crop_open(im_path, int(x), int(y), w, h, channel)
     IJ.run(
         im,
         "Translate...",
@@ -507,11 +508,12 @@ def open_subpixel_crop(im_path, x, y, w, h, channel):
             (
                 "x={}".format(int(x) - x),
                 "y={}".format(int(y) - y),
-                "interpolation=Bilinear",
+                "interpolation=Bicubic",
             )
         ),
     )
-    return crop(im, Roi(0, 0, w, h))
+    return im
+    # return crop(im, Roi(0, 0, w, h))
 
 
 def rotate(im, angle_degree):
