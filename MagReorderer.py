@@ -1020,42 +1020,33 @@ class MagReorderer(object):
 
         k1 = self.wafer.serial_order[0]
 
-        translation_section_to_roi = AffineTransform2D()
-        translation_section_to_roi.translate(
+        # translation global ROI to (0,0)
+        translation_ROI_to_zero = AffineTransform2D()
+        translation_ROI_to_zero.translate(
             [
-                self.wafer.rois[k1][0].centroid[0]
-                - self.wafer.sections[k1].centroid[0],
-                self.wafer.rois[k1][0].centroid[1]
-                - self.wafer.sections[k1].centroid[1],
+                -self.wafer.rois[k1][0].centroid[0],
+                -self.wafer.rois[k1][0].centroid[1],
             ]
         )
 
-        # translation global section centroid
-        translation_centroid_to_zero = AffineTransform2D()
-        translation_centroid_to_zero.translate(
-            [
-                -self.wafer.sections[k1].centroid[0],
-                -self.wafer.sections[k1].centroid[1],
-            ]
-        )
-
-        # section transform:
-        # global section lowres -> local section highres
+        # ROI global lowres -> local highres
         # 1. translate to center
         # 2. scale up
-        # 3. translate half window
-        section_transform = AffineTransform2D()
-        section_transform.preConcatenate(translation_centroid_to_zero)
-        section_transform.preConcatenate(scale_upsampling)
-        section_transform.preConcatenate(translation_zero_to_half_highres_fov)
-
-        reference_local_high_res_section = self.GC.transform_points(
-            self.wafer.sections[k1].points,
-            section_transform,
+        # 3. translate half high res window
+        ROI_global_lowres_to_local_highres = AffineTransform2D()
+        ROI_global_lowres_to_local_highres.preConcatenate(translation_ROI_to_zero)
+        ROI_global_lowres_to_local_highres.preConcatenate(scale_upsampling)
+        ROI_global_lowres_to_local_highres.preConcatenate(
+            translation_zero_to_half_highres_fov
         )
-        reference_local_high_res_roi = self.GC.transform_points(
+
+        ref_local_highres_section = self.GC.transform_points(
+            self.wafer.sections[k1].points,
+            ROI_global_lowres_to_local_highres,
+        )
+        ref_local_highres_ROI = self.GC.transform_points(
             self.wafer.rois[k1][0].points,
-            section_transform,
+            ROI_global_lowres_to_local_highres,
         )
 
         # cumulative_local_transform
@@ -1100,25 +1091,31 @@ class MagReorderer(object):
             # concatenate cumulative_local_transform
             cumulative_local_transform.preConcatenate(pair_local_transform)
 
-            translation_centroid_to_zero = AffineTransform2D()
-            translation_centroid_to_zero.translate(
+            translation_ROI_to_zero = AffineTransform2D()
+            translation_ROI_to_zero.translate(
                 [
-                    -self.wafer.sections[k2].centroid[0],
-                    -self.wafer.sections[k2].centroid[1],
+                    -self.wafer.rois[k2][0].centroid[0],
+                    -self.wafer.rois[k2][0].centroid[1],
                 ]
             )
-            section_transform = AffineTransform2D()
-            section_transform.preConcatenate(cumulative_local_transform)
-            section_transform.preConcatenate(
+            ROI_global_lowres_to_local_highres = AffineTransform2D()
+            ROI_global_lowres_to_local_highres.preConcatenate(
+                cumulative_local_transform
+            )
+            ROI_global_lowres_to_local_highres.preConcatenate(
                 translation_zero_to_half_highres_fov.inverse()
             )
-            section_transform.preConcatenate(scale_upsampling.inverse())
-            section_transform.preConcatenate(translation_centroid_to_zero.inverse())
+            ROI_global_lowres_to_local_highres.preConcatenate(
+                scale_upsampling.inverse()
+            )
+            ROI_global_lowres_to_local_highres.preConcatenate(
+                translation_ROI_to_zero.inverse()
+            )
             self.wafer.update_section(
                 k2,
-                section_transform,
-                reference_local_high_res_section,
-                reference_local_high_res_roi,
+                ROI_global_lowres_to_local_highres,
+                ref_local_highres_section,
+                ref_local_highres_ROI,
             )
         self.wafer.clear_transforms()
         self.wafer.compute_transforms()
