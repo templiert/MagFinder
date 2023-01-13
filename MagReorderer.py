@@ -153,6 +153,7 @@ def serialize_matching_outputs(
     costs,
     affine_transforms,
     folder,
+    percentage_cores,
 ):
     start = time.clock()
     n_sections = len(costs.values()[0])
@@ -169,7 +170,7 @@ def serialize_matching_outputs(
     ]
     start_threads(
         serialize_parallel,
-        fraction_cores=0.95,
+        fraction_cores=0.01 * percentage_cores,
         arguments=(
             AtomicInteger(0),
             list_to_serialize,
@@ -182,13 +183,13 @@ def serialize_matching_outputs(
     dlog("Duration serialize matching outputs: " + str(time.clock() - start))
 
 
-def deserialize_matching_outputs(folder):
+def deserialize_matching_outputs(folder, percentage_cores):
     start = time.clock()
     filenames = sorted(os.listdir(folder))
     deserialized_list = [None] * len(filenames)
     start_threads(
         deserialize_parallel,
-        fraction_cores=0.95,
+        fraction_cores=0.01 * percentage_cores,
         arguments=(
             AtomicInteger(0),
             [os.path.join(folder, filename) for filename in filenames],
@@ -622,8 +623,15 @@ class MagReorderer(object):
         )
 
     def get_user_params(self):
-        p = {}
         gd = GenericDialogPlus("MagReorderer parameters")
+        gd.addNumericField(
+            "Percentage of available computer cores for parallel computations",
+            90,
+            0,
+            5,
+            "%",
+        )
+        gd.addMessage("-" * 150)
         gd.addMessage(
             "Is the image used for reordering a multichannel image?"
             '\nIf yes, then tick the "multichannel" box and give the channel number (0-based)'
@@ -631,8 +639,9 @@ class MagReorderer(object):
         gd.addCheckbox("multichannel", False)
         gd.addNumericField("channel", 0, 0)
         gd.addMessage("-" * 150)
-        gd.addMessage("Type of transform for fits across sections")
-        gd.addChoice("", ["rigid", "affine"], "rigid")
+        gd.addChoice(
+            "Type of transform for fits across sections", ["rigid", "affine"], "rigid"
+        )
         gd.addMessage("-" * 150)
         gd.addMessage(
             "Use normalize local contrast? "
@@ -643,7 +652,9 @@ class MagReorderer(object):
             "\n    -the number of features and matches found in the log"
         )
         gd.addCheckbox("normalize local contrast", True)
-        gd.addNumericField("window size for normalize local contrast ", 100, 0)
+        gd.addNumericField(
+            "window size for normalize local contrast ", 100, 0, 5, "pixel"
+        )
         gd.addMessage("-" * 150)
         gd.addMessage(
             "SIFT parameters for the first coarse all-to-all pairwise matching"
@@ -656,7 +667,7 @@ class MagReorderer(object):
         gd.addMessage("-" * 150)
         gd.addMessage(
             "SIFT parameters for the final neighborhood matching."
-            "\nWith neighborhood=10, each section is compared against its 10 closest neighbors."
+            "\nWith neighborhood=10, each section is compared against its 10 most similar neighbors."
         )
         gd.addNumericField("neighborhood size", 10, 0)
         gd.addNumericField("gaussian blur", 1.6, 1)
@@ -668,22 +679,24 @@ class MagReorderer(object):
         gd.showDialog()
         if gd.wasCanceled():
             return
-        p["multichannel"] = gd.getNextBoolean()
-        p["channel"] = int(gd.getNextNumber())
-        p["transform"] = gd.getNextChoice()
-        p["contrast"] = gd.getNextBoolean()
-        p["contrast_size"] = int(gd.getNextNumber())
-        p["sift_gaussian_1"] = float(gd.getNextNumber())
-        p["sift_steps_1"] = int(gd.getNextNumber())
-        p["sift_min_octave_1"] = int(gd.getNextNumber())
-        p["sift_max_octave_1"] = int(gd.getNextNumber())
-        p["neighborhood"] = int(gd.getNextNumber())
-        p["sift_gaussian_2"] = float(gd.getNextNumber())
-        p["sift_steps_2"] = int(gd.getNextNumber())
-        p["sift_min_octave_2"] = int(gd.getNextNumber())
-        p["sift_max_octave_2"] = int(gd.getNextNumber())
-        p["export_highres"] = gd.getNextBoolean()
-        return p
+        return dict(
+            percentage_cores=int(gd.getNextNumber()),
+            multichannel=gd.getNextBoolean(),
+            channel=int(gd.getNextNumber()),
+            transform=gd.getNextChoice(),
+            contrast=gd.getNextBoolean(),
+            contrast_size=int(gd.getNextNumber()),
+            sift_gaussian_1=float(gd.getNextNumber()),
+            sift_steps_1=int(gd.getNextNumber()),
+            sift_min_octave_1=int(gd.getNextNumber()),
+            sift_max_octave_1=int(gd.getNextNumber()),
+            neighborhood=int(gd.getNextNumber()),
+            sift_gaussian_2=float(gd.getNextNumber()),
+            sift_steps_2=int(gd.getNextNumber()),
+            sift_min_octave_2=int(gd.getNextNumber()),
+            sift_max_octave_2=int(gd.getNextNumber()),
+            export_highres=gd.getNextBoolean(),
+        )
 
     def get_im_path(self, n):
         """
@@ -883,7 +896,7 @@ class MagReorderer(object):
         )
         start_threads(
             parallel_compute_sift,
-            fraction_cores=1,
+            fraction_cores=0.01 * self.user_params["percentage_cores"],
             arguments=(
                 AtomicInteger(0),
                 roi_paths,
@@ -905,7 +918,7 @@ class MagReorderer(object):
         all_features = [0] * len(features_paths)
         start_threads(
             deserialize_parallel,
-            fraction_cores=1,
+            fraction_cores=0.01 * self.user_params["percentage_cores"],
             arguments=[
                 AtomicInteger(0),
                 features_paths,
@@ -930,7 +943,7 @@ class MagReorderer(object):
         dlog("Compute SIFT matches ...".center(100, "-"))
         start_threads(
             get_SIFT_similarity_parallel,
-            fraction_cores=0.95,
+            fraction_cores=0.01 * self.user_params["percentage_cores"],
             arguments=[
                 AtomicInteger(0),
                 pairs,
@@ -946,6 +959,7 @@ class MagReorderer(object):
             costs,
             affine_transforms,
             matches_folder,
+            self.user_params["percentage_cores"],
         )
         dlog("SIFT matches computed.".center(100, "-"))
 
@@ -959,7 +973,9 @@ class MagReorderer(object):
         self.compute_matches(features_folder, matches_folder, pairs=pairs)
 
     @staticmethod
-    def get_cost_mat(matches_folder, metric=Metric.INLIER_NUMBER):
+    def get_cost_mat(
+        matches_folder, metric=Metric.INLIER_NUMBER, percentage_cores=0.95
+    ):
         """
         Returns a cost matrix using the given metric
         inliers: inverse of the number of remaining inliers after ransac
@@ -968,12 +984,16 @@ class MagReorderer(object):
         (
             pairwise_costs,
             _,
-        ) = deserialize_matching_outputs(matches_folder)
+        ) = deserialize_matching_outputs(matches_folder, percentage_cores)
         return pairwise_costs[metric]
 
     def get_neighbor_pairs(self, matches_folder, metric, neighborhood=10):
         """Returns the best neighbor pairs given a neighborhood"""
-        pairwise_costs = self.get_cost_mat(matches_folder, metric=metric)
+        pairwise_costs = self.get_cost_mat(
+            matches_folder,
+            metric=metric,
+            percentage_cores=self.user_params["percentage_cores"],
+        )
         all_neighbor_pairs = []
 
         for i in range(self.n_sections):
@@ -1001,7 +1021,11 @@ class MagReorderer(object):
                 ]
             return
         dlog("Computing order ...".center(100, "-"))
-        pairwise_costs = self.get_cost_mat(matches_folder, metric=metric)
+        pairwise_costs = self.get_cost_mat(
+            matches_folder,
+            metric=metric,
+            percentage_cores=self.user_params["percentage_cores"],
+        )
         order = self.wafer.tsp_solver.compute_tsp_order(pairwise_costs)
         with open(self.sift_order_path, "w") as f:
             f.write(",".join(str(o) for o in order))
@@ -1011,7 +1035,7 @@ class MagReorderer(object):
     def align_sections(self):
         """Realigns the sections based on the transforms found during reordering"""
         affine_transforms = deserialize_matching_outputs(
-            self.neighbor_fine_sift_matches
+            self.neighbor_fine_sift_matches, self.user_params["percentage_cores"]
         )[1]
 
         scale_upsampling = AffineTransform2D()
@@ -1154,10 +1178,9 @@ class MagReorderer(object):
             [-user_view_size, -user_view_size],
             [user_view_size, user_view_size],
         ]
-        (
-            _,
-            affine_transforms,
-        ) = deserialize_matching_outputs(self.neighbor_fine_sift_matches)
+        (_, affine_transforms,) = deserialize_matching_outputs(
+            self.neighbor_fine_sift_matches, self.user_params["percentage_cores"]
+        )
 
         affine_transforms = {
             key: self.GC.to_imglib2_aff(transform)
@@ -1187,10 +1210,9 @@ class MagReorderer(object):
             [user_view_size, user_view_size],
         ]
 
-        (
-            _,
-            affine_transforms,
-        ) = deserialize_matching_outputs(self.neighbor_fine_sift_matches)
+        (_, affine_transforms,) = deserialize_matching_outputs(
+            self.neighbor_fine_sift_matches, self.user_params["percentage_cores"]
+        )
 
         affine_transforms = {key: AffineTransform2D() for key in affine_transforms}
 

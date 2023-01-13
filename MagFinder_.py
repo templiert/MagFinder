@@ -255,8 +255,13 @@ class Wafer(object):
                 [
                     os.path.join(root, name)
                     for name in os.listdir(root)
-                    if any(name.endswith(x) for x in ACCEPTED_IMAGE_FORMATS)
-                    and not "verview" in name
+                    if all(
+                        (
+                            any(name.endswith(x) for x in ACCEPTED_IMAGE_FORMATS),
+                            "verview" not in name,
+                            "annotated" not in name,
+                        )
+                    )
                 ],
                 key=os.path.getsize,  # the smallest image is the one used for magfinder navigation
             )[0]
