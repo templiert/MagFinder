@@ -416,12 +416,14 @@ class Wafer(object):
                     local_poly.setPosition(0, id_order + 1, 0)
                     local_poly.setHandleSize(annotation_type.handle_size_local)
                     self.manager.addRoi(local_poly)
-                    IJ.log(repr(annotation))
+                    poly = self.GC.transform_points_to_poly(
+                        [annotation.centroid], self.poly_transforms[section_id]
+                    )
                     IJ.log(
-                        "section centroid : {}".format(
-                            self.GC.transform_points_to_poly(
-                                [annotation.centroid], self.poly_transforms[section_id]
-                            )
+                        "{} | local {} {}".format(
+                            repr(annotation),
+                            poly.getFloatPolygon().xpoints,
+                            poly.getFloatPolygon().ypoints,
                         )
                     )
             if section_id not in self.rois:
@@ -436,12 +438,14 @@ class Wafer(object):
                 local_poly.setPosition(0, id_order + 1, 0)
                 local_poly.setHandleSize(subroi.type_.handle_size_local)
                 self.manager.addRoi(local_poly)
-                IJ.log(repr(annotation))
+                poly = self.GC.transform_points_to_poly(
+                    [subroi.centroid], self.poly_transforms[section_id]
+                )
                 IJ.log(
-                    "roi centroid : {}".format(
-                        self.GC.transform_points_to_poly(
-                            [subroi.centroid], self.poly_transforms[section_id]
-                        )
+                    "{} | local {} {}".format(
+                        repr(subroi),
+                        poly.getFloatPolygon().xpoints,
+                        poly.getFloatPolygon().ypoints,
                     )
                 )
 
@@ -708,8 +712,8 @@ class Wafer(object):
                 RV.transform(
                     Views.interpolate(
                         Views.extendZero(self.img_global),
-                        # NLinearInterpolatorFactory()
-                        NearestNeighborInterpolatorFactory(),
+                        NLinearInterpolatorFactory()
+                        # NearestNeighborInterpolatorFactory(),
                     ),
                     self.transforms[o],
                 ),
@@ -1163,8 +1167,11 @@ class Annotation(object):
         return "{}-{:04}".format(self.type_.string, self.id_)
 
     def __repr__(self):
-        return "{} | id {} | centroid {}".format(
-            self.type_.name, self.id_, self.centroid
+        return "{} | id {} | global {:.3f} {:.3f}".format(
+            self.type_.name,
+            self.id_,
+            self.centroid[0],
+            self.centroid[1],
         )
 
     def __len__(self):
@@ -1191,7 +1198,18 @@ class Annotation(object):
     def compute_centroid(self):
         if len(self) == 1:
             return self.points[0]
-        return list(self.poly.getContourCentroid())
+        poly_centroid = list(self.poly.getContourCentroid())
+        x_sum = sum([p[0] for p in self.points])
+        y_sum = sum([p[1] for p in self.points])
+        python_centroid = [
+            x_sum / float(len(self.points)),
+            y_sum / float(len(self.points)),
+        ]
+        IJ.log(
+            "DEBUG | compute centroid | {} | {} ".format(poly_centroid, python_centroid)
+        )
+        # return list(self.poly.getContourCentroid())
+        return python_centroid
 
     def compute_angle(self):
         if len(self) < 2:
@@ -1218,22 +1236,43 @@ class GeometryCalculator(object):
     @staticmethod
     def points_to_poly(points):
         """From list of points to Fiji PointRoi or PolygonRoi"""
+        IJ.log("DEBUG points_to_poly | {}".format(points))
         if len(points) == 1:
-            return PointRoi(*[float(v) for v in points[0]])
+            # return PointRoi(*[float(v) for v in points[0]])
+            result = PointRoi(float(points[0][0]), float(points[0][1]))
+            IJ.log("DEBUG POINTROI points_to_poly | {}".format(result))
+            IJ.log(
+                "DEBUG points_to_poly float polygon | {}-{}".format(
+                    result.getFloatPolygon().xpoints,
+                    result.getFloatPolygon().ypoints,
+                )
+            )
+            return result
         if len(points) == 2:
             polygon_type = PolygonRoi.POLYLINE
+            IJ.log("POLYLINE")
         elif len(points) > 2:
             polygon_type = PolygonRoi.POLYGON
-        return PolygonRoi(
+        result = PolygonRoi(
             [float(point[0]) for point in points],
             [float(point[1]) for point in points],
             polygon_type,
         )
+        IJ.log("DEBUG PolygonRoi points_to_poly | {}".format(result))
+        IJ.log(
+            "DEBUG points_to_poly float polygon | {}-{}".format(
+                result.getFloatPolygon().xpoints,
+                result.getFloatPolygon().ypoints,
+            )
+        )
+        return result
 
     @staticmethod
     def poly_to_points(poly):
         float_polygon = poly.getFloatPolygon()
-        return [[x, y] for x, y in zip(float_polygon.xpoints, float_polygon.ypoints)]
+        result = [[x, y] for x, y in zip(float_polygon.xpoints, float_polygon.ypoints)]
+        IJ.log("DEBUG | poly_to_points | {}".format(result))
+        return result
 
     @staticmethod
     def points_to_flat_string(points):

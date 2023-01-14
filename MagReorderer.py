@@ -1047,7 +1047,7 @@ class MagReorderer(object):
         scale_upsampling.scale(self.downsampling_factor)
 
         translation_zero_to_half_highres_fov = AffineTransform2D()
-        translation_zero_to_half_highres_fov.translate(2 * [0.5 * self.highres_w])
+        translation_zero_to_half_highres_fov.translate(2 * [0.5 * self.highres_w - 0.5])
 
         k1 = self.wafer.serial_order[0]
 
