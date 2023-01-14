@@ -485,10 +485,11 @@ def crop_open(im_path, x, y, w, h, channel):
     assert isinstance(y, int)
     assert isinstance(w, int)
     assert isinstance(h, int)
+    IJ.log("crop open: {}-{}-{}-{}".format(x, y, w, h))
     options = ImporterOptions()
     options.setColorMode(ImporterOptions.COLOR_MODE_GRAYSCALE)
     options.setCrop(True)
-    options.setCropRegion(0, Region(x, y, w, h))
+    options.setCropRegion(0, Region(x + 0, y + 0, w, h))
     options.setId(im_path)
     if channel is None:
         imps = loci.plugins.BF.openImagePlus(options)
@@ -501,6 +502,7 @@ def crop_open(im_path, x, y, w, h, channel):
 def open_subpixel_crop(im_path, x, y, w, h, channel):
     """Opens only the given ROI with subpixel accuracy. See crop_open"""
     # im = crop_open(im_path, int(x), int(y), w + 1, h + 1, channel)
+    IJ.log("subpixel crop: {}-{}-{}-{}".format(x, y, w, h))
     im = crop_open(im_path, int(x), int(y), w, h, channel)
     IJ.run(
         im,
@@ -600,7 +602,8 @@ class MagReorderer(object):
         self.wafer = wafer
         self.wafer.manager_to_wafer()  # to compute transforms
         self.GC = self.wafer.GC  # GeometryCalculator
-        self.image_path = self.get_im_path(-1)
+        # self.image_path = self.get_im_path(-1)
+        self.image_path = self.get_im_path(0)
         self.downsampling_factor = self.get_downsampling_factor()
         self.working_folder = mkdir_p(
             os.path.join(self.wafer.root, "ordering_working_folder")
@@ -750,10 +753,12 @@ class MagReorderer(object):
         reader = ImageReader()
         omeMeta = MetadataTools.createOMEXMLMetadata()
         reader.setMetadataStore(omeMeta)
-        reader.setId(self.get_im_path(-1))
+        # reader.setId(self.get_im_path(-1))
+        reader.setId(self.get_im_path(0))
         large_x = omeMeta.getPixelsSizeX(0).getNumberValue()
 
-        reader.setId(self.get_im_path(0))
+        # reader.setId(self.get_im_path(0))
+        reader.setId(self.get_im_path(-1))
         small_x = omeMeta.getPixelsSizeX(0).getNumberValue()
 
         downsampling_factor = large_x / float(small_x)
@@ -1152,7 +1157,8 @@ class MagReorderer(object):
         dlog("High res export ...")
         dir_export = mkdir_p(os.path.join(self.working_folder, "export_high_res"))
         halfsize = int(0.6 * self.highres_w)
-        high_res_path = self.get_im_path(-1)
+        # high_res_path = self.get_im_path(-1)
+        high_res_path = self.get_im_path(0)
         for id_enum, id_section in enumerate(self.wafer.serial_order):
             section = self.wafer.sections[id_section]
             im = open_subpixel_crop(

@@ -264,7 +264,8 @@ class Wafer(object):
                     )
                 ],
                 key=os.path.getsize,  # the smallest image is the one used for magfinder navigation
-            )[0]
+                # )[0]
+            )[1]
         except IndexError:
             IJ.showMessage(
                 "Message",
@@ -415,6 +416,14 @@ class Wafer(object):
                     local_poly.setPosition(0, id_order + 1, 0)
                     local_poly.setHandleSize(annotation_type.handle_size_local)
                     self.manager.addRoi(local_poly)
+                    IJ.log(repr(annotation))
+                    IJ.log(
+                        "section centroid : {}".format(
+                            self.GC.transform_points_to_poly(
+                                [annotation.centroid], self.poly_transforms[section_id]
+                            )
+                        )
+                    )
             if section_id not in self.rois:
                 continue
             for _, subroi in sorted(self.rois[section_id].iteritems()):
@@ -427,6 +436,14 @@ class Wafer(object):
                 local_poly.setPosition(0, id_order + 1, 0)
                 local_poly.setHandleSize(subroi.type_.handle_size_local)
                 self.manager.addRoi(local_poly)
+                IJ.log(repr(annotation))
+                IJ.log(
+                    "roi centroid : {}".format(
+                        self.GC.transform_points_to_poly(
+                            [subroi.centroid], self.poly_transforms[section_id]
+                        )
+                    )
+                )
 
     def clear_annotations(self):
         """Clears all annotations except the landmarks"""
@@ -660,7 +677,14 @@ class Wafer(object):
             # poly transform (there is an offset)
             aff_copy = aff.copy()
             poly_translation = AffineTransform2D()
-            poly_translation.translate([0.5 * v for v in self.local_display_size])
+
+            translation_to_local_center = [
+                int(0.5 * self.local_display_size[0]) - 0.5,
+                int(0.5 * self.local_display_size[1]) - 0.5,
+            ]
+            IJ.log("translation to local center{}".format(translation_to_local_center))
+            poly_translation.translate(translation_to_local_center)
+
             self.poly_transforms[section_id] = aff_copy.preConcatenate(poly_translation)
             self.poly_transforms_inverse[section_id] = self.poly_transforms[
                 section_id
@@ -669,9 +693,16 @@ class Wafer(object):
     def create_local_stack(self):
         """Creates the local stack with imglib2 framework"""
         display_params = (
-            [-intr(0.5 * v) for v in self.local_display_size],
-            [intr(0.5 * v) for v in self.local_display_size],
+            [
+                int(-0.5 * self.local_display_size[0]),
+                int(-0.5 * self.local_display_size[1]),
+            ],
+            [
+                int(0.5 * self.local_display_size[0]),
+                int(0.5 * self.local_display_size[1]),
+            ],
         )
+        IJ.log("local stack {}".format(display_params))
         imgs = [
             Views.interval(
                 RV.transform(
@@ -692,6 +723,11 @@ class Wafer(object):
         )
         IL.show(self.img)
         self.image_local = IJ.getImage()
+        IJ.log(
+            "image local {} - {}".format(
+                self.image_local.getWidth(), self.image_local.getHeight()
+            )
+        )
 
     def add(self, annotation_type, poly, annotation_id):
         """
@@ -912,11 +948,13 @@ class Wafer(object):
                 section_extent, self.GC.longest_diagonal(section.points)
             )
 
-        display_size = (
-            [intr(DISPLAY_FACTOR * section_extent)] * 2
+        width = 4 * (
+            intr(DISPLAY_FACTOR * section_extent)
             if not self.magnets
-            else [intr(DISPLAY_FACTOR * 1.2 * section_extent)] * 2
+            else intr(DISPLAY_FACTOR * 1.2 * section_extent)
         )
+        width = width - width % 2
+        display_size = [width] * 2
 
         display_center = [
             intr(0.5 * display_size[0]),
@@ -1124,6 +1162,11 @@ class Annotation(object):
             return "{}-{:04}.{:02}".format(self.type_.string, *self.id_)
         return "{}-{:04}".format(self.type_.string, self.id_)
 
+    def __repr__(self):
+        return "{} | id {} | centroid {}".format(
+            self.type_.name, self.id_, self.centroid
+        )
+
     def __len__(self):
         return self.poly.size()
 
@@ -1174,7 +1217,7 @@ class GeometryCalculator(object):
 
     @staticmethod
     def points_to_poly(points):
-        """From list of points to Fiji pointroi or polygonroi"""
+        """From list of points to Fiji PointRoi or PolygonRoi"""
         if len(points) == 1:
             return PointRoi(*[float(v) for v in points[0]])
         if len(points) == 2:
@@ -1199,13 +1242,13 @@ class GeometryCalculator(object):
         for point in points:
             points_flat.append(point[0])
             points_flat.append(point[1])
-        points_string = ",".join([str(round(x, 3)) for x in points_flat])
+        points_string = ",".join([str(round(x, 6)) for x in points_flat])
         return points_string
 
     @staticmethod
     def point_to_flat_string(point):
         """[1,2] -> 1,2"""
-        flat_string = ",".join([str(round(x, 3)) for x in point])
+        flat_string = ",".join([str(round(x, 6)) for x in point])
         return flat_string
 
     @staticmethod
@@ -1221,14 +1264,16 @@ class GeometryCalculator(object):
     def transform_points(source_points, aff):
         target_points = []
         for source_point in source_points:
-            target_point = jarray.array([0, 0], "d")
+            target_point = jarray.array([0.0, 0.0], "d")
             aff.apply(source_point, target_point)
             target_points.append(target_point)
         return target_points
 
     @staticmethod
     def to_imglib2_aff(trans):
-        mat_data = jarray.array([[0, 0, 0], [0, 0, 0]], java.lang.Class.forName("[D"))
+        mat_data = jarray.array(
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], java.lang.Class.forName("[D")
+        )
         trans.toMatrix(mat_data)
         imglib2_transform = AffineTransform2D()
         imglib2_transform.set(mat_data)
@@ -1244,12 +1289,13 @@ class GeometryCalculator(object):
         """Fits an affine transform to given points"""
         X = Matrix(
             jarray.array(
-                [[x, y, 1] for (x, y) in zip(x_in, y_in)], java.lang.Class.forName("[D")
+                [[x, y, 1.0] for (x, y) in zip(x_in, y_in)],
+                java.lang.Class.forName("[D"),
             )
         )
         Y = Matrix(
             jarray.array(
-                [[x, y, 1] for (x, y) in zip(x_out, y_out)],
+                [[x, y, 1.0] for (x, y) in zip(x_out, y_out)],
                 java.lang.Class.forName("[D"),
             )
         )
@@ -1260,7 +1306,8 @@ class GeometryCalculator(object):
     def apply_affine_t(x_in, y_in, aff):
         X = Matrix(
             jarray.array(
-                [[x, y, 1] for (x, y) in zip(x_in, y_in)], java.lang.Class.forName("[D")
+                [[x, y, 1.0] for (x, y) in zip(x_in, y_in)],
+                java.lang.Class.forName("[D"),
             )
         )
         Y = X.times(aff)
