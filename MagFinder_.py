@@ -267,8 +267,8 @@ class Wafer(object):
                     )
                 ],
                 key=os.path.getsize,  # the smallest image is the one used for magfinder navigation
-                # )[0]
-            )[1]
+            )[0]
+            # )[1]
         except IndexError:
             IJ.showMessage(
                 "Message",

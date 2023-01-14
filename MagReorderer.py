@@ -75,6 +75,9 @@ ACCEPTED_IMAGE_FORMATS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
 OFFSET_CROP_OPEN = 0
 OFFSET_ROI_TO_ZERO = 0
 OFFSET_ZERO_TO_HALF_HIGHRES_FOV = 0
+
+OFFSET_EXPORT_HIGHRES = 0
+
 # JUMPS
 # GOOD LOWRES - BAD HIGHRES
 
@@ -656,8 +659,8 @@ class MagReorderer(object):
         self.wafer = wafer
         self.wafer.manager_to_wafer()  # to compute transforms
         self.GC = self.wafer.GC  # GeometryCalculator
-        # self.image_path = self.get_im_path(-1)
-        self.image_path = self.get_im_path(0)
+        self.image_path = self.get_im_path(-1)
+        # self.image_path = self.get_im_path(0)
         self.downsampling_factor = self.get_downsampling_factor()
         self.working_folder = mkdir_p(
             os.path.join(self.wafer.root, "ordering_working_folder")
@@ -807,12 +810,12 @@ class MagReorderer(object):
         reader = ImageReader()
         omeMeta = MetadataTools.createOMEXMLMetadata()
         reader.setMetadataStore(omeMeta)
-        # reader.setId(self.get_im_path(-1))
-        reader.setId(self.get_im_path(0))
+        reader.setId(self.get_im_path(-1))
+        # reader.setId(self.get_im_path(0))
         large_x = omeMeta.getPixelsSizeX(0).getNumberValue()
 
-        # reader.setId(self.get_im_path(0))
-        reader.setId(self.get_im_path(-1))
+        reader.setId(self.get_im_path(0))
+        # reader.setId(self.get_im_path(-1))
         small_x = omeMeta.getPixelsSizeX(0).getNumberValue()
 
         downsampling_factor = large_x / float(small_x)
@@ -1218,14 +1221,18 @@ class MagReorderer(object):
         dlog("High res export ...")
         dir_export = mkdir_p(os.path.join(self.working_folder, "export_high_res"))
         halfsize = int(0.6 * self.highres_w)
-        # high_res_path = self.get_im_path(-1)
-        high_res_path = self.get_im_path(0)
+        high_res_path = self.get_im_path(-1)
+        # high_res_path = self.get_im_path(0)
         for id_enum, id_section in enumerate(self.wafer.serial_order):
             section = self.wafer.sections[id_section]
             im = open_subpixel_crop(
                 high_res_path,
-                section.centroid[0] * self.downsampling_factor - halfsize + 0.5,
-                section.centroid[1] * self.downsampling_factor - halfsize + 0.5,
+                section.centroid[0] * self.downsampling_factor
+                - halfsize
+                + OFFSET_EXPORT_HIGHRES,
+                section.centroid[1] * self.downsampling_factor
+                - halfsize
+                + OFFSET_EXPORT_HIGHRES,
                 2 * halfsize,
                 2 * halfsize,
                 self.user_params["channel"],
