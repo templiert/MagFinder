@@ -44,6 +44,9 @@ sys.path.append(IJ.getDirectory("plugins"))
 
 import MagReorderer
 
+# OFFSET_TO_LOCAL_CENTER = -0.5
+OFFSET_TO_LOCAL_CENTER = 0
+
 SIZE_HANDLE = 15
 LOCAL_SIZE_STANDARD = 400  # for local summary
 # DISPLAY_FACTOR = 2.5
@@ -683,8 +686,8 @@ class Wafer(object):
             poly_translation = AffineTransform2D()
 
             translation_to_local_center = [
-                int(0.5 * self.local_display_size[0]) - 0.5,
-                int(0.5 * self.local_display_size[1]) - 0.5,
+                int(0.5 * self.local_display_size[0]) + OFFSET_TO_LOCAL_CENTER,
+                int(0.5 * self.local_display_size[1]) + OFFSET_TO_LOCAL_CENTER,
             ]
             IJ.log("translation to local center{}".format(translation_to_local_center))
             poly_translation.translate(translation_to_local_center)

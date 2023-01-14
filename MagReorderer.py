@@ -67,6 +67,60 @@ ImporterOptions = importlib.import_module("loci.plugins.in.ImporterOptions")
 
 ACCEPTED_IMAGE_FORMATS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
 
+# OFFSET_CROP_OPEN = -0.5
+# OFFSET_ROI_TO_ZERO = 0.5
+# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = -0.5
+
+# all done with nearest neighbor
+OFFSET_CROP_OPEN = 0
+OFFSET_ROI_TO_ZERO = 0
+OFFSET_ZERO_TO_HALF_HIGHRES_FOV = 0
+# JUMPS
+# GOOD LOWRES - BAD HIGHRES
+
+# OFFSET_CROP_OPEN = -0.5
+# OFFSET_ROI_TO_ZERO = 0
+# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = 0
+# GOOD HIGHRES - BAD LOWRES
+# GOOD HIGHRES - BAD LOWRES
+
+
+# OFFSET_CROP_OPEN = 0
+# OFFSET_ROI_TO_ZERO = 0.5
+# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = 0
+# JUMPS
+# jumps
+
+# OFFSET_CROP_OPEN = -0.5
+# OFFSET_ROI_TO_ZERO = 0.5
+# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = 0
+# JUMPS
+# GOOD LOWRES - FAIL HIGHRES
+
+# OFFSET_CROP_OPEN = 0
+# OFFSET_ROI_TO_ZERO = 0
+# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = -0.5
+# JUMPS
+# jumps
+
+# OFFSET_CROP_OPEN = -0.5
+# OFFSET_ROI_TO_ZERO = 0
+# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = -0.5
+# JUMPS
+# GOOD LOWRES - FAIL HIGHRES
+
+# OFFSET_CROP_OPEN = 0
+# OFFSET_ROI_TO_ZERO = 0.5
+# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = -0.5
+# JUMPS
+# jumps
+
+# OFFSET_CROP_OPEN = -0.5
+# OFFSET_ROI_TO_ZERO = 0.5
+# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = -0.5
+# JUMPS
+# jumps
+
 
 def get_distance(p_1, p_2):
     """Distance between two points"""
@@ -870,8 +924,12 @@ class MagReorderer(object):
         for crop_param in crop_params:
             highres_roi_im = open_subpixel_crop(
                 crop_param.highres_path,
-                crop_param.highres_centroid[0] - 0.5 * crop_param.highres_w,
-                crop_param.highres_centroid[1] - 0.5 * crop_param.highres_w,
+                crop_param.highres_centroid[0]
+                - 0.5 * crop_param.highres_w
+                + OFFSET_CROP_OPEN,
+                crop_param.highres_centroid[1]
+                - 0.5 * crop_param.highres_w
+                + OFFSET_CROP_OPEN,
                 crop_param.highres_w,
                 crop_param.highres_w,
                 crop_param.channel,
@@ -1045,9 +1103,12 @@ class MagReorderer(object):
 
         scale_upsampling = AffineTransform2D()
         scale_upsampling.scale(self.downsampling_factor)
+        IJ.log("downsampling factor {}".format(self.downsampling_factor))
 
         translation_zero_to_half_highres_fov = AffineTransform2D()
-        translation_zero_to_half_highres_fov.translate(2 * [0.5 * self.highres_w - 0.5])
+        translation_zero_to_half_highres_fov.translate(
+            2 * [0.5 * self.highres_w - OFFSET_ZERO_TO_HALF_HIGHRES_FOV]
+        )
 
         k1 = self.wafer.serial_order[0]
 
@@ -1055,8 +1116,8 @@ class MagReorderer(object):
         translation_ROI_to_zero = AffineTransform2D()
         translation_ROI_to_zero.translate(
             [
-                -self.wafer.rois[k1][0].centroid[0],
-                -self.wafer.rois[k1][0].centroid[1],
+                -self.wafer.rois[k1][0].centroid[0] + OFFSET_ROI_TO_ZERO,
+                -self.wafer.rois[k1][0].centroid[1] + OFFSET_ROI_TO_ZERO,
             ]
         )
 
@@ -1125,8 +1186,8 @@ class MagReorderer(object):
             translation_ROI_to_zero = AffineTransform2D()
             translation_ROI_to_zero.translate(
                 [
-                    -self.wafer.rois[k2][0].centroid[0],
-                    -self.wafer.rois[k2][0].centroid[1],
+                    -self.wafer.rois[k2][0].centroid[0] + OFFSET_ROI_TO_ZERO,
+                    -self.wafer.rois[k2][0].centroid[1] + OFFSET_ROI_TO_ZERO,
                 ]
             )
             ROI_global_lowres_to_local_highres = AffineTransform2D()
@@ -1163,8 +1224,8 @@ class MagReorderer(object):
             section = self.wafer.sections[id_section]
             im = open_subpixel_crop(
                 high_res_path,
-                section.centroid[0] * self.downsampling_factor - halfsize,
-                section.centroid[1] * self.downsampling_factor - halfsize,
+                section.centroid[0] * self.downsampling_factor - halfsize + 0.5,
+                section.centroid[1] * self.downsampling_factor - halfsize + 0.5,
                 2 * halfsize,
                 2 * halfsize,
                 self.user_params["channel"],
