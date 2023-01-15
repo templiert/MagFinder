@@ -65,64 +65,16 @@ from net.imglib2.view import Views
 # from loci.plugins.in import ImporterOptions # fails because of the "in", use import_module instead
 ImporterOptions = importlib.import_module("loci.plugins.in.ImporterOptions")
 
+DEBUG = False
+
 ACCEPTED_IMAGE_FORMATS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
 
-# OFFSET_CROP_OPEN = -0.5
-# OFFSET_ROI_TO_ZERO = 0.5
-# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = -0.5
-
-# all done with nearest neighbor
-OFFSET_CROP_OPEN = 0
-OFFSET_ROI_TO_ZERO = 0
-OFFSET_ZERO_TO_HALF_HIGHRES_FOV = 0
-
-OFFSET_EXPORT_HIGHRES = 0
-
-# JUMPS
-# GOOD LOWRES - BAD HIGHRES
-
-# OFFSET_CROP_OPEN = -0.5
-# OFFSET_ROI_TO_ZERO = 0
-# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = 0
-# GOOD HIGHRES - BAD LOWRES
-# GOOD HIGHRES - BAD LOWRES
-
-
-# OFFSET_CROP_OPEN = 0
-# OFFSET_ROI_TO_ZERO = 0.5
-# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = 0
-# JUMPS
-# jumps
-
-# OFFSET_CROP_OPEN = -0.5
-# OFFSET_ROI_TO_ZERO = 0.5
-# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = 0
-# JUMPS
-# GOOD LOWRES - FAIL HIGHRES
-
-# OFFSET_CROP_OPEN = 0
-# OFFSET_ROI_TO_ZERO = 0
-# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = -0.5
-# JUMPS
-# jumps
-
-# OFFSET_CROP_OPEN = -0.5
-# OFFSET_ROI_TO_ZERO = 0
-# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = -0.5
-# JUMPS
-# GOOD LOWRES - FAIL HIGHRES
-
-# OFFSET_CROP_OPEN = 0
-# OFFSET_ROI_TO_ZERO = 0.5
-# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = -0.5
-# JUMPS
-# jumps
-
-# OFFSET_CROP_OPEN = -0.5
-# OFFSET_ROI_TO_ZERO = 0.5
-# OFFSET_ZERO_TO_HALF_HIGHRES_FOV = -0.5
-# JUMPS
-# jumps
+# attempt at solving weird pixel offset
+# currently working settings for no downsampling
+OFFSET_CROP_OPEN = 0  # -0.5?
+OFFSET_ROI_TO_ZERO = 0  # +0.5?
+OFFSET_ZERO_TO_HALF_HIGHRES_FOV = 0  # -0.5?
+OFFSET_EXPORT_HIGHRES = 0.5  # OK for no downsampling
 
 
 def get_distance(p_1, p_2):
@@ -542,7 +494,8 @@ def crop_open(im_path, x, y, w, h, channel):
     assert isinstance(y, int)
     assert isinstance(w, int)
     assert isinstance(h, int)
-    IJ.log("crop open: {}-{}-{}-{}".format(x, y, w, h))
+    if DEBUG:
+        IJ.log("crop open: {}-{}-{}-{}".format(x, y, w, h))
     options = ImporterOptions()
     options.setColorMode(ImporterOptions.COLOR_MODE_GRAYSCALE)
     options.setCrop(True)
@@ -559,7 +512,8 @@ def crop_open(im_path, x, y, w, h, channel):
 def open_subpixel_crop(im_path, x, y, w, h, channel):
     """Opens only the given ROI with subpixel accuracy. See crop_open"""
     # im = crop_open(im_path, int(x), int(y), w + 1, h + 1, channel)
-    IJ.log("subpixel crop: {}-{}-{}-{}".format(x, y, w, h))
+    if DEBUG:
+        IJ.log("subpixel crop: {}-{}-{}-{}".format(x, y, w, h))
     im = crop_open(im_path, int(x), int(y), w, h, channel)
     IJ.run(
         im,
@@ -580,7 +534,13 @@ def rotate(im, angle_degree):
     IJ.run(
         im,
         "Rotate... ",
-        "angle={} grid=1 interpolation=Bilinear".format(angle_degree),
+        " ".join(
+            (
+                "angle={}".format(angle_degree),
+                "grid=1",
+                "interpolation=Bilinear",
+            )
+        ),
     )
 
 
@@ -660,7 +620,6 @@ class MagReorderer(object):
         self.wafer.manager_to_wafer()  # to compute transforms
         self.GC = self.wafer.GC  # GeometryCalculator
         self.image_path = self.get_im_path(-1)
-        # self.image_path = self.get_im_path(0)
         self.downsampling_factor = self.get_downsampling_factor()
         self.working_folder = mkdir_p(
             os.path.join(self.wafer.root, "ordering_working_folder")
@@ -768,8 +727,13 @@ class MagReorderer(object):
             [
                 os.path.join(self.wafer.root, name)
                 for name in os.listdir(self.wafer.root)
-                if any([name.endswith(x) for x in ACCEPTED_IMAGE_FORMATS])
-                and not "verview" in name
+                if all(
+                    (
+                        any(name.endswith(x) for x in ACCEPTED_IMAGE_FORMATS),
+                        "verview" not in name,
+                        "nnotated" not in name,
+                    )
+                )
             ],
             key=os.path.getsize,
         )[n]
@@ -811,11 +775,9 @@ class MagReorderer(object):
         omeMeta = MetadataTools.createOMEXMLMetadata()
         reader.setMetadataStore(omeMeta)
         reader.setId(self.get_im_path(-1))
-        # reader.setId(self.get_im_path(0))
         large_x = omeMeta.getPixelsSizeX(0).getNumberValue()
 
         reader.setId(self.get_im_path(0))
-        # reader.setId(self.get_im_path(-1))
         small_x = omeMeta.getPixelsSizeX(0).getNumberValue()
 
         downsampling_factor = large_x / float(small_x)
@@ -1222,17 +1184,13 @@ class MagReorderer(object):
         dir_export = mkdir_p(os.path.join(self.working_folder, "export_high_res"))
         halfsize = int(0.6 * self.highres_w)
         high_res_path = self.get_im_path(-1)
-        # high_res_path = self.get_im_path(0)
-        for id_enum, id_section in enumerate(self.wafer.serial_order):
+        for id_serial, id_section in enumerate(self.wafer.serial_order):
             section = self.wafer.sections[id_section]
+            centroid_highres = [self.downsampling_factor * v for v in section.centroid]
             im = open_subpixel_crop(
                 high_res_path,
-                section.centroid[0] * self.downsampling_factor
-                - halfsize
-                + OFFSET_EXPORT_HIGHRES,
-                section.centroid[1] * self.downsampling_factor
-                - halfsize
-                + OFFSET_EXPORT_HIGHRES,
+                centroid_highres[0] - halfsize + OFFSET_EXPORT_HIGHRES,
+                centroid_highres[1] - halfsize + OFFSET_EXPORT_HIGHRES,
                 2 * halfsize,
                 2 * halfsize,
                 self.user_params["channel"],
@@ -1241,7 +1199,7 @@ class MagReorderer(object):
             IJ.save(
                 im,
                 os.path.join(
-                    dir_export, "section_{:04}_{:04}.tif".format(id_enum, id_section)
+                    dir_export, "section_{:04}_{:04}.tif".format(id_serial, id_section)
                 ),
             )
         dlog("High res export completed")

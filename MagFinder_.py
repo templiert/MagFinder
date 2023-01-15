@@ -44,6 +44,8 @@ sys.path.append(IJ.getDirectory("plugins"))
 
 import MagReorderer
 
+DEBUG = False
+
 # OFFSET_TO_LOCAL_CENTER = -0.5
 OFFSET_TO_LOCAL_CENTER = 0
 
@@ -422,13 +424,14 @@ class Wafer(object):
                     poly = self.GC.transform_points_to_poly(
                         [annotation.centroid], self.poly_transforms[section_id]
                     )
-                    IJ.log(
-                        "{} | local {} {}".format(
-                            repr(annotation),
-                            poly.getFloatPolygon().xpoints,
-                            poly.getFloatPolygon().ypoints,
+                    if DEBUG:
+                        IJ.log(
+                            "{} | local {} {}".format(
+                                repr(annotation),
+                                poly.getFloatPolygon().xpoints,
+                                poly.getFloatPolygon().ypoints,
+                            )
                         )
-                    )
             if section_id not in self.rois:
                 continue
             for _, subroi in sorted(self.rois[section_id].iteritems()):
@@ -444,13 +447,14 @@ class Wafer(object):
                 poly = self.GC.transform_points_to_poly(
                     [subroi.centroid], self.poly_transforms[section_id]
                 )
-                IJ.log(
-                    "{} | local {} {}".format(
-                        repr(subroi),
-                        poly.getFloatPolygon().xpoints,
-                        poly.getFloatPolygon().ypoints,
+                if DEBUG:
+                    IJ.log(
+                        "{} | local {} {}".format(
+                            repr(subroi),
+                            poly.getFloatPolygon().xpoints,
+                            poly.getFloatPolygon().ypoints,
+                        )
                     )
-                )
 
     def clear_annotations(self):
         """Clears all annotations except the landmarks"""
@@ -686,10 +690,8 @@ class Wafer(object):
             poly_translation = AffineTransform2D()
 
             translation_to_local_center = [
-                int(0.5 * self.local_display_size[0]) + OFFSET_TO_LOCAL_CENTER,
-                int(0.5 * self.local_display_size[1]) + OFFSET_TO_LOCAL_CENTER,
+                int(0.5 * v) + OFFSET_TO_LOCAL_CENTER for v in self.local_display_size
             ]
-            IJ.log("translation to local center{}".format(translation_to_local_center))
             poly_translation.translate(translation_to_local_center)
 
             self.poly_transforms[section_id] = aff_copy.preConcatenate(poly_translation)
@@ -709,7 +711,8 @@ class Wafer(object):
                 int(0.5 * self.local_display_size[1]),
             ],
         )
-        IJ.log("local stack {}".format(display_params))
+        if DEBUG:
+            IJ.log("local stack {}".format(display_params))
         imgs = [
             Views.interval(
                 RV.transform(
@@ -730,11 +733,12 @@ class Wafer(object):
         )
         IL.show(self.img)
         self.image_local = IJ.getImage()
-        IJ.log(
-            "image local {} - {}".format(
-                self.image_local.getWidth(), self.image_local.getHeight()
+        if DEBUG:
+            IJ.log(
+                "image local {} - {}".format(
+                    self.image_local.getWidth(), self.image_local.getHeight()
+                )
             )
-        )
 
     def add(self, annotation_type, poly, annotation_id):
         """
@@ -1199,19 +1203,17 @@ class Annotation(object):
         return self.poly.containsPoint(*point)
 
     def compute_centroid(self):
+        # TODO confirm that python computation not much slower than java version
+        # poly_centroid = list(self.poly.getContourCentroid())
+        # warning: small discrepancy with python version
         if len(self) == 1:
             return self.points[0]
-        poly_centroid = list(self.poly.getContourCentroid())
         x_sum = sum([p[0] for p in self.points])
         y_sum = sum([p[1] for p in self.points])
         python_centroid = [
             x_sum / float(len(self.points)),
             y_sum / float(len(self.points)),
         ]
-        IJ.log(
-            "DEBUG | compute centroid | {} | {} ".format(poly_centroid, python_centroid)
-        )
-        # return list(self.poly.getContourCentroid())
         return python_centroid
 
     def compute_angle(self):
@@ -1239,42 +1241,27 @@ class GeometryCalculator(object):
     @staticmethod
     def points_to_poly(points):
         """From list of points to Fiji PointRoi or PolygonRoi"""
-        IJ.log("DEBUG points_to_poly | {}".format(points))
+        """Always use floatPlogyon.
+        Roi[Point, x=677, y=678] does a round()
+        But Roi[Polygon, x=577, y=577, width=201, height=201] does a int()
+        It should not matter as long as we always use FloatPolygon()
+        """
         if len(points) == 1:
-            # return PointRoi(*[float(v) for v in points[0]])
-            result = PointRoi(float(points[0][0]), float(points[0][1]))
-            IJ.log("DEBUG POINTROI points_to_poly | {}".format(result))
-            IJ.log(
-                "DEBUG points_to_poly float polygon | {}-{}".format(
-                    result.getFloatPolygon().xpoints,
-                    result.getFloatPolygon().ypoints,
-                )
-            )
-            return result
+            return PointRoi(*[float(v) for v in points[0]])
         if len(points) == 2:
             polygon_type = PolygonRoi.POLYLINE
-            IJ.log("POLYLINE")
         elif len(points) > 2:
             polygon_type = PolygonRoi.POLYGON
-        result = PolygonRoi(
+        return PolygonRoi(
             [float(point[0]) for point in points],
             [float(point[1]) for point in points],
             polygon_type,
         )
-        IJ.log("DEBUG PolygonRoi points_to_poly | {}".format(result))
-        IJ.log(
-            "DEBUG points_to_poly float polygon | {}-{}".format(
-                result.getFloatPolygon().xpoints,
-                result.getFloatPolygon().ypoints,
-            )
-        )
-        return result
 
     @staticmethod
     def poly_to_points(poly):
         float_polygon = poly.getFloatPolygon()
         result = [[x, y] for x, y in zip(float_polygon.xpoints, float_polygon.ypoints)]
-        IJ.log("DEBUG | poly_to_points | {}".format(result))
         return result
 
     @staticmethod
