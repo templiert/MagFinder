@@ -355,6 +355,7 @@ class Wafer(object):
         """
         self.clear_annotations()
         for roi in self.manager.iterator():
+            roi.enableSubPixelResolution()  # does not solve subpixel accuracy for landmarks
             annotation_type, section_id, annotation_id = type_id(roi.getName())
             self.add(
                 annotation_type,
@@ -383,7 +384,11 @@ class Wafer(object):
                 # do not draw landmark if it is not visible,
                 # otherwise it creates a weird offset with negative coordinates
                 continue
-            self.manager.addRoi(landmark.poly)
+            self.manager.addRoi(
+                landmark.poly
+            )  # TODO why does it display the PointRoi at pixel corner
+            # instead of using subpixel accuracy?
+            # self.image_global.setRoi(landmark.poly) # should add a 0.5 offset
             landmark.poly.setHandleSize(landmark.type_.handle_size_global)
         for section_id, section in sorted(self.sections.iteritems()):
             self.manager.addRoi(section.poly)
@@ -721,7 +726,7 @@ class Wafer(object):
                 RV.transform(
                     Views.interpolate(
                         Views.extendZero(self.img_global),
-                        #NLinearInterpolatorFactory()
+                        # NLinearInterpolatorFactory()
                         NearestNeighborInterpolatorFactory(),
                     ),
                     self.transforms[o],
@@ -1251,6 +1256,11 @@ class GeometryCalculator(object):
         It should not matter as long as we always use FloatPolygon()
         """
         if len(points) == 1:
+            # attempt at subpixel accuracy, but that's not the issue
+            # point_roi = PointRoi()
+            # point_roi.enableSubPixelResolution()
+            # point_roi.addPoint(*[float(v) for v in points[0]])
+            # return point_roi
             return PointRoi(*[float(v) for v in points[0]])
         if len(points) == 2:
             polygon_type = PolygonRoi.POLYLINE
@@ -1853,6 +1863,8 @@ class KeyListener(KeyAdapter):
         if drawn_roi.getState() is PolygonRoi.CONSTRUCTING and drawn_roi.size() > 3:
             return
 
+        drawn_roi.enableSubPixelResolution()
+
         name_suggestions = []
         if self.wafer.mode is Mode.LOCAL:
             section_id = self.wafer.serial_order[self.wafer.image.getSlice() - 1]
@@ -1891,6 +1903,7 @@ class KeyListener(KeyAdapter):
             return
 
         points = GeometryCalculator.poly_to_points(drawn_roi)
+
         # handle cases when the drawn_roi is not closed
         if drawn_roi.getState() == PolygonRoi.CONSTRUCTING:
             if drawn_roi.size() == 3:
@@ -1900,7 +1913,9 @@ class KeyListener(KeyAdapter):
                     PolygonRoi.POLYLINE,
                 )
             elif drawn_roi.size() == 2:
+                # TODO construct empty, activate subpixel, add point?
                 drawn_roi = PointRoi(*points[0])
+                drawn_roi.enableSubPixelResolution()
 
         drawn_roi.setName(annotation_name)
         annotation_type, section_id, annotation_id = type_id(annotation_name)
