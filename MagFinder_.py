@@ -959,11 +959,12 @@ class Wafer(object):
                 section_extent, self.GC.longest_diagonal(section.points)
             )
 
-        width = 4 * (
+        width = (
             intr(DISPLAY_FACTOR * section_extent)
             if not self.magnets
             else intr(DISPLAY_FACTOR * 1.2 * section_extent)
         )
+
         width = width - width % 2
         display_size = [width] * 2
 
