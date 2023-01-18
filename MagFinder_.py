@@ -566,7 +566,12 @@ class Wafer(object):
         self.save_csv()
 
     def save_csv(self):
-        # TODO currently broken with multirois
+        """Saves a csv table of annotations for convenience.
+        It is only written and never read by this code.
+        It is currently broken since the update to multiple rois per section.
+        """
+        return
+        # TODO currently broken since multirois
         csv_path = os.path.join(self.root, "annotations.csv")
         with open(csv_path, "w") as f:
             f.write(
