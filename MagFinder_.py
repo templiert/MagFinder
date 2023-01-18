@@ -32,7 +32,9 @@ from java.util.zip import GZIPInputStream
 from mpicbg.models import Point, PointMatch, RigidModel2D
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
 from net.imglib2.interpolation.randomaccess import (
-    NearestNeighborInterpolatorFactory, NLinearInterpolatorFactory)
+    NearestNeighborInterpolatorFactory,
+    NLinearInterpolatorFactory,
+)
 from net.imglib2.realtransform import AffineTransform2D
 from net.imglib2.realtransform import RealViews as RV
 from net.imglib2.view import Views
@@ -355,7 +357,6 @@ class Wafer(object):
         """
         self.clear_annotations()
         for roi in self.manager.iterator():
-            roi.enableSubPixelResolution()  # does not solve subpixel accuracy for landmarks
             annotation_type, section_id, annotation_id = type_id(roi.getName())
             self.add(
                 annotation_type,
@@ -384,11 +385,11 @@ class Wafer(object):
                 # do not draw landmark if it is not visible,
                 # otherwise it creates a weird offset with negative coordinates
                 continue
-            self.manager.addRoi(
-                landmark.poly
-            )  # TODO why does it display the PointRoi at pixel corner
-            # instead of using subpixel accuracy?
-            # self.image_global.setRoi(landmark.poly) # should add a 0.5 offset
+            # TODO PointRoi are displayed with 0.5 offset, but not PolygonRoi
+            # sort of mentioned in docs of Roi:
+            # https://javadoc.io/static/net.imagej/ij/1.53j/ij/gui/Roi.html
+            # but still leads to weird behavior
+            self.manager.addRoi(landmark.poly)
             landmark.poly.setHandleSize(landmark.type_.handle_size_global)
         for section_id, section in sorted(self.sections.iteritems()):
             self.manager.addRoi(section.poly)
@@ -1256,11 +1257,6 @@ class GeometryCalculator(object):
         It should not matter as long as we always use FloatPolygon()
         """
         if len(points) == 1:
-            # attempt at subpixel accuracy, but that's not the issue
-            # point_roi = PointRoi()
-            # point_roi.enableSubPixelResolution()
-            # point_roi.addPoint(*[float(v) for v in points[0]])
-            # return point_roi
             return PointRoi(*[float(v) for v in points[0]])
         if len(points) == 2:
             polygon_type = PolygonRoi.POLYLINE
@@ -1863,8 +1859,6 @@ class KeyListener(KeyAdapter):
         if drawn_roi.getState() is PolygonRoi.CONSTRUCTING and drawn_roi.size() > 3:
             return
 
-        drawn_roi.enableSubPixelResolution()
-
         name_suggestions = []
         if self.wafer.mode is Mode.LOCAL:
             section_id = self.wafer.serial_order[self.wafer.image.getSlice() - 1]
@@ -1913,9 +1907,7 @@ class KeyListener(KeyAdapter):
                     PolygonRoi.POLYLINE,
                 )
             elif drawn_roi.size() == 2:
-                # TODO construct empty, activate subpixel, add point?
                 drawn_roi = PointRoi(*points[0])
-                drawn_roi.enableSubPixelResolution()
 
         drawn_roi.setName(annotation_name)
         annotation_type, section_id, annotation_id = type_id(annotation_name)
