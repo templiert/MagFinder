@@ -1401,8 +1401,8 @@ def ordered_transformed_imgstack(
         transformed = RV.transform(
             Views.interpolate(
                 loaded_imgs[j],
-                NLinearInterpolatorFactory(),
-                # NearestNeighborInterpolatorFactory(),
+                # NLinearInterpolatorFactory(),
+                NearestNeighborInterpolatorFactory(),
             ),
             current_transform,
         )

@@ -32,9 +32,7 @@ from java.util.zip import GZIPInputStream
 from mpicbg.models import Point, PointMatch, RigidModel2D
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
 from net.imglib2.interpolation.randomaccess import (
-    NearestNeighborInterpolatorFactory,
-    NLinearInterpolatorFactory,
-)
+    NearestNeighborInterpolatorFactory, NLinearInterpolatorFactory)
 from net.imglib2.realtransform import AffineTransform2D
 from net.imglib2.realtransform import RealViews as RV
 from net.imglib2.view import Views
@@ -723,8 +721,8 @@ class Wafer(object):
                 RV.transform(
                     Views.interpolate(
                         Views.extendZero(self.img_global),
-                        NLinearInterpolatorFactory()
-                        # NearestNeighborInterpolatorFactory(),
+                        #NLinearInterpolatorFactory()
+                        NearestNeighborInterpolatorFactory(),
                     ),
                     self.transforms[o],
                 ),
