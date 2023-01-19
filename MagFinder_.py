@@ -1166,6 +1166,35 @@ class Wafer(object):
         wafer_target.wafer_to_manager()
         dlog("Completed transfer from {} to {} ...".format(wafer_source, wafer_target))
 
+    def get_current_id_section_local(self):
+        """
+        Gets the id of the section currently displayed in the local stack.
+        It involes the serial order and off-by-one considerations.
+        """
+        return self.serial_order[self.image.getSlice() - 1]
+
+    def push_section(self, direction):
+        """Pushes the currently displayed section backward or forward in the serial order"""
+        delta = -1 if direction is Neighbor.PREVIOUS else 1
+        id_section = self.get_current_id_section_local()
+        id_serial = self.serial_order.index(id_section)
+        if (id_serial == 0 and direction is Neighbor.PREVIOUS) or (
+            id_serial == len(self) - 1 and direction is Neighbor.NEXT
+        ):
+            dlog("Cannot push the section to {} section".format(direction))
+            return
+        self.serial_order[id_serial], self.serial_order[id_serial + delta] = (
+            self.serial_order[id_serial + delta],
+            self.serial_order[id_serial],
+        )
+        self.wafer_to_manager()
+        self.close_mode()
+        self.start_local_mode()
+        set_roi_and_update_roi_manager(
+            get_roi_index_from_name(str(self.sections[id_section]))
+        )
+        dlog("The section has been pushed to the {} section".format(direction))
+
 
 class Annotation(object):
     def __init__(self, annotation_type, poly, id_):
@@ -1843,6 +1872,10 @@ class KeyListener(KeyAdapter):
             self.propagate_to_neighbor_section(
                 neighbor=Neighbor.PREVIOUS if keyEvent.isShiftDown() else Neighbor.NEXT
             )
+        if keycode == KeyEvent.VK_1:
+            self.wafer.push_section(Neighbor.PREVIOUS)
+        if keycode == KeyEvent.VK_2:
+            self.wafer.push_section(Neighbor.NEXT)
         keyEvent.consume()
 
     def handle_keys_e_r(self, keycode):
@@ -1863,7 +1896,7 @@ class KeyListener(KeyAdapter):
 
         name_suggestions = []
         if self.wafer.mode is Mode.LOCAL:
-            section_id = self.wafer.serial_order[self.wafer.image.getSlice() - 1]
+            section_id = self.wafer.get_current_id_section_local()
             if drawn_roi.size() == 2:
                 name_suggestions.append("magnet-{:04}".format(section_id))
             else:
@@ -2450,9 +2483,13 @@ if __name__ == "__main__":
         )
     )
 
-    HELP_MSG_GLOBAL = (
-        "<html><br>[a] = Press the key a<br><br>"
+    HEADER_HELP = (
+        "<html><br>[a] = Press the key a<br>[A] = [a] + [shift] = Press the key a while holding [shift] down<br>"
         + '<p style="text-align:center"><a href="https://youtu.be/ZQLTBbM6dMA">20-minute video tutorial</a></p>'
+    )
+
+    HELP_MSG_GLOBAL = (
+        HEADER_HELP
         + tag("Navigation", "h3")
         + print_list(
             "Zoom in/out"
@@ -2504,8 +2541,7 @@ if __name__ == "__main__":
         + "<br><br><br></html>"
     )
     HELP_MSG_LOCAL = (
-        "<html><br><br><br>[a] = Press the key a<br><br>"
-        + '<p style="text-align:center"><a href="https://youtu.be/ZQLTBbM6dMA">20-minute video tutorial</a></p>'
+        HEADER_HELP
         + tag("Navigation", "h3")
         + print_list(
             "Navigate annotations up/down" + print_list("[d]/[f]", "Mouse wheel"),
@@ -2521,9 +2557,10 @@ if __name__ == "__main__":
             "[t] toggles to global mode",
             "[p] propagates the current annotation to sections defined in the dialog. Section and landmark annotations cannot be propagated",
             "[g] propagates all annotations of the current section to the next serial section and moves to the next serial section",
-            "[G] (=shift + [g]) propagates all annotations of the current section to the previous serial section and moves to the previous serial section",
+            "[G] propagates all annotations of the current section to the previous serial section and moves to the previous serial section",
             "[q] quits. Everything will be saved",
             "[s] saves to file (happens already automatically when toggling [t] or quitting [q])",
+            "[1]/[2] pushes the currently displayed section backward/forward. It does not recompute alignment.",
             "[m] exports a summary montage",
             (
                 "[o]   (letter o) computes the section order that minimizes the travel of the microscope stage"
