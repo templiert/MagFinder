@@ -1,98 +1,102 @@
 import configparser
 
+
 def create_empty_magc():
     magc = {
-        'sections': {},
-        'rois': {},
-        'magnets': {},
-        'focus': {},
-        'landmarksEM': {
-            'source': {},
-            'target': {}
-            },
-        }
+        "sections": {},
+        "rois": {},
+        "magnets": {},
+        "focus": {},
+        "landmarks": {"source": {}, "target": {}},
+    }
     return magc
+
 
 def read_magc(magc_path):
     config = configparser.ConfigParser()
 
     magc = create_empty_magc()
 
-    with open(magc_path, 'r') as configfile:
+    with open(magc_path, "r") as configfile:
         config.read_file(configfile)
 
     for header in config.sections():
-        if header.startswith('sections.'):
-            section_id = int(header.split('.')[1])
-            magc['sections'][section_id] = {}
-            for key,val in config.items(header):
-                if key == 'polygon':
-                    vals = [float(x) for x in val.split(',')]
-                    poly_points = [[x,y] for x,y in zip(vals[::2], vals[1::2])]
-                    magc['sections'][section_id]['polygon'] = poly_points
-                elif key == 'center':
-                    magc['sections'][section_id]['center'] = [float(x) for x in val.split(',')]
-                elif key in ['area', 'compression']:
-                    magc['sections'][section_id][str(key)] = float(val)
-                elif key == 'angle':
-                    magc['sections'][section_id][str(key)] = ((float(val)+90)%360) - 180
+        if header.startswith("section."):
+            section_dict = {}
+            for key, val in config.items(header):
+                if key == "polygon":
+                    vals = [float(x) for x in val.split(",")]
+                    poly_points = [[x, y] for x, y in zip(vals[::2], vals[1::2])]
+                    section_dict["polygon"] = poly_points
+                elif key == "center":
+                    section_dict["center"] = [float(x) for x in val.split(",")]
+                elif key in ["area", "compression"]:
+                    section_dict[str(key)] = float(val)
+                elif key == "angle":
+                    section_dict[str(key)] = ((float(val) + 90) % 360) - 180
+            magc["sections"][int(header.split(".")[1])] = section_dict
 
-        elif header.startswith('rois.'):
-            roi_id = int(header.split('.')[1])
-            magc['rois'][roi_id] = {}
-            for key,val in config.items(header):
-                if key=='template':
-                    magc['rois'][roi_id]['template'] = int(val)
-                elif key == 'polygon':
-                    vals = [float(x) for x in val.split(',')]
-                    poly_points = [[x,y] for x,y in zip(vals[::2], vals[1::2])]
-                    magc['rois'][roi_id]['polygon'] = poly_points
-                elif key == 'center':
-                    magc['rois'][roi_id]['center'] = [float(x) for x in val.split(',')]
-                elif key in ['area']:
-                    magc['rois'][roi_id][str(key)] = float(val)
-                elif key == 'angle':
-                    magc['rois'][roi_id][str(key)] = ((float(val)+90)%360) - 180
+        elif header.startswith("roi."):
+            section_id = int(header.split(".")[1])
+            roi_id = int(header.split(".")[2])
+            if section_id not in magc["rois"]:
+                magc["rois"][section_id] = {}
+            roi_dict = {}
+            for key, val in config.items(header):
+                if key == "template":
+                    roi_dict["template"] = int(val)
+                elif key == "polygon":
+                    vals = [float(x) for x in val.split(",")]
+                    poly_points = [[x, y] for x, y in zip(vals[::2], vals[1::2])]
+                    roi_dict["polygon"] = poly_points
+                elif key == "center":
+                    roi_dict["center"] = [float(x) for x in val.split(",")]
+                elif key in ["area"]:
+                    roi_dict[str(key)] = float(val)
+                elif key == "angle":
+                    roi_dict[str(key)] = ((float(val) + 90) % 360) - 180
+            magc["rois"][section_id][roi_id] = roi_dict
 
-        elif header.startswith('magnets.'):
-            magnet_id = int(header.split('.')[1])
-            magc['magnets'][magnet_id] = {}
-            for key,val in config.items(header):
-                if key=='template':
-                    magc['magnets'][magnet_id]['template'] = int(val)
-                elif key=='location':
-                    magc['magnets'][magnet_id]['location'] = [float(x) for x in val.split(',')]
+        elif header.startswith("magnet."):
+            magnet_dict = {}
+            for key, val in config.items(header):
+                if key == "template":
+                    magnet_dict["template"] = int(val)
+                elif key == "location":
+                    magnet_dict["location"] = [float(x) for x in val.split(",")]
+            magc["magnets"][int(header.split(".")[1])] = magnet_dict
 
-        elif header.startswith('focus.'):
-            focus_id = int(header.split('.')[1])
-            magc['focus'][focus_id] = {}
-            for key,val in config.items(header):
-                if key=='template':
-                    magc['focus'][focus_id]['template'] = int(val)
-                elif key in ['location', 'polygon']:
-                    vals = [float(x) for x in val.split(',')]
-                    focus_points = [
-                        [x,y]
-                        for x,y in zip(vals[::2], vals[1::2])]
-                    magc['focus'][focus_id]['polygon'] = focus_points
+        elif header.startswith("focus."):
+            focus_dict = {}
+            for key, val in config.items(header):
+                if key == "template":
+                    focus_dict["template"] = int(val)
+                elif key in ["location", "polygon"]:
+                    vals = [float(x) for x in val.split(",")]
+                    focus_points = [[x, y] for x, y in zip(vals[::2], vals[1::2])]
+                    focus_dict["polygon"] = focus_points
+            magc["focus"][int(header.split(".")[1])] = focus_dict
 
-        elif header.startswith('landmarksEM.'):
-            landmark_id = int(header.split('.')[1])
-            magc['landmarksEM']['source'][landmark_id] = [float(x) for x in config.get(header, 'location').split(',')]
+        elif header.startswith("landmark."):
+            landmark_id = int(header.split(".")[1])
+            magc["landmarks"]["source"][landmark_id] = [
+                float(x) for x in config.get(header, "location").split(",")
+            ]
 
-        elif header == 'serialorder':
-            value = config.get('serialorder', 'serialorder')
-            if value!='[]':
-                magc['serialorder'] = [int(x) for x in value.split(',')]
+        elif header == "serial_order":
+            value = config.get("serial_order", "serial_order")
+            if value != "[]":
+                magc["serial_order"] = [int(x) for x in value.split(",")]
 
-        elif header == 'tsporder':
-            value = config.get('tsporder', 'tsporder')
-            if value!='[]':
-                magc['tsporder'] = [int(x) for x in value.split(',')]
+        elif header == "stage_order":
+            value = config.get("stage_order", "stage_order")
+            if value != "[]":
+                magc["stage_order"] = [int(x) for x in value.split(",")]
 
     return magc
 
-'''
+
+"""
 ###############################
 # format of the magc dictionary
 ###############################
@@ -107,12 +111,15 @@ magc
         :
         n
     'rois'
-        1
-            'template': x
-            'polygon': [[x1,y1],...,[xn,yn]]
-            'center': [x,y]
-            'area': x (pixel)
-        .   'angle': x (degree)
+        1 # section id
+            1 # roi id (multiple rois per section)
+                'template': x
+                'polygon': [[x1,y1],...,[xn,yn]]
+                'center': [x,y]
+                'area': x (pixel)
+            .   'angle': x (degree)
+            :
+        .   n
         :
         n
     'magnets'
@@ -138,12 +145,10 @@ magc
             .
             :
             n: [x,y]
-'serialorder': [x1,...,xn]
-'tsporder': [x1,...,xn]
-'''
+'serial_order': [x1,...,xn]
+'stage_order': [x1,...,xn]
+"""
 
 magc_path = xxx
 magc = read_magc(magc_path)
-print(
-    'magc dictionary',
-    magc)
+print(f"{magc=}")
