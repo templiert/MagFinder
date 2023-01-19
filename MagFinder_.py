@@ -1948,8 +1948,8 @@ class KeyListener(KeyAdapter):
             handle_size = 5
             stroke_size = 3
         else:
-            handle_size = 5 * intr(im_w / LOCAL_SIZE_STANDARD)
-            stroke_size = 3 * im_w / LOCAL_SIZE_STANDARD
+            handle_size = 1 * intr(im_w / LOCAL_SIZE_STANDARD)
+            stroke_size = 0.2 * im_w / LOCAL_SIZE_STANDARD
 
         flattened_ims = []
         for id_serial, section_id in enumerate(self.wafer.serial_order):
@@ -1957,7 +1957,7 @@ class KeyListener(KeyAdapter):
             flattened = ImagePlus("flattened", im_p)
 
             for roi in self.manager.iterator():
-                if "-{:04}".format(section_id) in roi.getName():
+                if "roi-{:04}".format(section_id) in roi.getName():
                     cloned_roi = roi.clone()
                     cloned_roi.setHandleSize(handle_size)
                     cloned_roi.setStrokeWidth(stroke_size)
