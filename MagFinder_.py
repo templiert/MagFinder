@@ -32,9 +32,7 @@ from java.util.zip import GZIPInputStream
 from mpicbg.models import Point, PointMatch, RigidModel2D
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
 from net.imglib2.interpolation.randomaccess import (
-    NearestNeighborInterpolatorFactory,
-    NLinearInterpolatorFactory,
-)
+    NearestNeighborInterpolatorFactory, NLinearInterpolatorFactory)
 from net.imglib2.realtransform import AffineTransform2D
 from net.imglib2.realtransform import RealViews as RV
 from net.imglib2.view import Views
@@ -1737,13 +1735,16 @@ class MouseWheelListener(MouseAdapter):
             elif mouseWheelEvent.getWheelRotation() == -1:
                 IJ.run("In [+]")
 
-    @staticmethod
-    def handle_mouse_wheel_local(mouseWheelEvent):
+    def handle_mouse_wheel_local(self, mouseWheelEvent):
         mouseWheelEvent.consume()
         if mouseWheelEvent.isControlDown():
-            move_roi_manager_selection(10 * mouseWheelEvent.getWheelRotation())
+            move_roi_manager_selection(
+                10 * mouseWheelEvent.getWheelRotation(), wafer=self.wafer
+            )
         else:
-            move_roi_manager_selection(mouseWheelEvent.getWheelRotation())
+            move_roi_manager_selection(
+                mouseWheelEvent.getWheelRotation(), wafer=self.wafer
+            )
 
 
 class KeyListener(KeyAdapter):
@@ -1856,15 +1857,15 @@ class KeyListener(KeyAdapter):
         if keycode == KeyEvent.VK_M:
             self.handle_key_m_local()
         if keycode == KeyEvent.VK_D:
-            move_roi_manager_selection(-1)
+            move_roi_manager_selection(-1, self.wafer, shift=keyEvent.isShiftDown())
         if keycode == KeyEvent.VK_F:
-            move_roi_manager_selection(1)
+            move_roi_manager_selection(1, self.wafer, shift=keyEvent.isShiftDown())
         if keycode == KeyEvent.VK_C:
-            move_roi_manager_selection(-10)
+            move_roi_manager_selection(-10, self.wafer, shift=keyEvent.isShiftDown())
         if keycode == KeyEvent.VK_V:
-            move_roi_manager_selection(10)
+            move_roi_manager_selection(10, self.wafer, shift=keyEvent.isShiftDown())
         if keycode in (KeyEvent.VK_E, KeyEvent.VK_R):
-            self.handle_keys_e_r(keycode)
+            self.handle_keys_e_r(keycode, wafer, shift=keyEvent.isShiftDown())
         if keycode == KeyEvent.VK_T:
             self.wafer.close_mode()
             self.wafer.start_global_mode()
@@ -1878,12 +1879,16 @@ class KeyListener(KeyAdapter):
             self.wafer.push_section(Neighbor.NEXT)
         keyEvent.consume()
 
-    def handle_keys_e_r(self, keycode):
+    def handle_keys_e_r(self, keycode, wafer, shift=False):
         selectedIndex = self.manager.getSelectedIndex()
         if selectedIndex != -1:
             self.manager.runCommand("Update")
         set_roi_and_update_roi_manager(
-            0 if keycode == KeyEvent.VK_E else self.manager.getCount() - 1
+            0
+            if keycode == KeyEvent.VK_E
+            else self.manager.getCount() - 1
+            if not shift
+            else get_roi_index_from_name(str(wafer.sections[wafer.serial_order[-1]]))
         )
 
     def handle_key_a(self):
@@ -2321,7 +2326,7 @@ def roi_manager_scroll_bottom():
     scrollBar.setValue(intr(1.5 * barMax))
 
 
-def move_roi_manager_selection(n):
+def move_roi_manager_selection(n, wafer, shift=False):
     manager = get_roi_manager()
     if manager.getCount() == 0:
         return
@@ -2329,14 +2334,26 @@ def move_roi_manager_selection(n):
     if selected_index == -1:
         roi_id = get_roi_index_from_current_slice()
         if roi_id is not None:
-            set_roi_and_update_roi_manager(roi_id)
+            if shift:
+                roi = manager.getRoi(roi_id)
+                section_id = type_id(roi.getName())[1]
+                set_roi_and_update_roi_manager(
+                    get_roi_index_from_name(str(wafer.sections[section_id]))
+                )
+            else:
+                set_roi_and_update_roi_manager(roi_id)
     else:
         manager.runCommand("Update")
-        if n < 0:
-            set_roi_and_update_roi_manager(max(0, selected_index + n))
-        elif n > 0:
+        if shift:
+            roi = manager.getRoi(selected_index)
+            section_id = type_id(roi.getName())[1]
+            serial_id = wafer.serial_order.index(section_id)
+            new_serial_id = min(len(wafer) - 1, max(0, serial_id + n))
+            new_name = str(wafer.sections[wafer.serial_order[new_serial_id]])
+            set_roi_and_update_roi_manager(get_roi_index_from_name(new_name))
+        else:
             set_roi_and_update_roi_manager(
-                min(manager.getCount() - 1, selected_index + n)
+                min(max(0, selected_index + n), manager.getCount() - 1)
             )
 
 
@@ -2396,6 +2413,7 @@ def set_roi_and_update_roi_manager(roi_index, select=True):
 
 
 def get_roi_index_from_current_slice():
+    # TODO looks suspicious
     manager = get_roi_manager()
     slice_id = wafer.image.getSlice()
     # find the rois that are assigned to that slice
@@ -2544,10 +2562,13 @@ if __name__ == "__main__":
         HEADER_HELP
         + tag("Navigation", "h3")
         + print_list(
-            "Navigate annotations up/down" + print_list("[d]/[f]", "Mouse wheel"),
-            "Navigate 10 annotations up/down"
+            "Navigates annotations up/down" + print_list("[d]/[f]", "Mouse wheel"),
+            "Navigates 10 annotations up/down"
             + print_list("[c]/[v]", "[Ctrl] + Mouse wheel"),
             "[e]/[r] navigate to first/last annotation",
+            "[D]/[F], [C]/[V], [E]/[R], same as lowercase commands above but navigates "
+            + tag("sections", "u")
+            + " instead of annotations",
             "If you lose the current annotation (by clicking outside of the annotation), then press [d],[f] or use the mouse wheel to make the annotation appear again.",
         )
         + tag("Action", "h3")
