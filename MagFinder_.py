@@ -2577,8 +2577,7 @@ if __name__ == "__main__":
             "[a] creates/modifies an annotation",
             "[t] toggles to global mode",
             "[p] propagates the current annotation to sections defined in the dialog. Section and landmark annotations cannot be propagated",
-            "[g] propagates all annotations of the current section to the next serial section and moves to the next serial section",
-            "[G] propagates all annotations of the current section to the previous serial section and moves to the previous serial section",
+            "[g]/[G] propagates all annotations of the current section to the next/previous serial section and moves to the next/previous serial section",
             "[q] quits. Everything will be saved",
             "[s] saves to file (happens already automatically when toggling [t] or quitting [q])",
             "[1]/[2] pushes the currently displayed section backward/forward. It does not recompute alignment.",
@@ -2588,7 +2587,7 @@ if __name__ == "__main__":
                 " (not the same as the serial sectioning order of the sections)."
                 ' Saves the order in the .magc file in the field "stage_order"'
             ),
-            "[k] exports high resolution stack if companion high resolution image present",
+            "[k] exports high resolution stack if companion high resolution image is present",
             L_HELP,
         )
         + "<br><br><br></html>"
