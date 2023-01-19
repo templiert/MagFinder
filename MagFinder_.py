@@ -1788,6 +1788,8 @@ class KeyListener(KeyAdapter):
             self.handle_key_m_global()
         if keycode == KeyEvent.VK_K:
             self.wafer.transfer_from_source_wafer()
+        if keycode == KeyEvent.VK_Y:
+            self.wafer.serial_order = self.wafer.serial_order[::-1]
 
     def handle_key_m_global(self):
         """Saves overview"""
@@ -2496,6 +2498,7 @@ if __name__ == "__main__":
                 'Stores the serial order in the .magc file in the field "serial_order".'
                 " We recommend to save beforehand a copy of the .magc file outside of the directory"
             ),
+            "[y] reverses the serial order",
             L_HELP,
         )
         + "<br><br><br></html>"
