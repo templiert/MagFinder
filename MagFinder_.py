@@ -32,7 +32,9 @@ from java.util.zip import GZIPInputStream
 from mpicbg.models import Point, PointMatch, RigidModel2D
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
 from net.imglib2.interpolation.randomaccess import (
-    NearestNeighborInterpolatorFactory, NLinearInterpolatorFactory)
+    NearestNeighborInterpolatorFactory,
+    NLinearInterpolatorFactory,
+)
 from net.imglib2.realtransform import AffineTransform2D
 from net.imglib2.realtransform import RealViews as RV
 from net.imglib2.view import Views
@@ -2099,6 +2101,7 @@ class KeyListener(KeyAdapter):
                     annotation_id
                 ].points
             for input_index in valid_input_indexes:
+                getattr(self.wafer, annotation_type.name)[input_index] = {}
                 propagated_points = GeometryCalculator.propagate_points(
                     self.wafer.sections[section_id].points,
                     annotation_points,
