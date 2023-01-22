@@ -2101,7 +2101,7 @@ class KeyListener(KeyAdapter):
                     annotation_id
                 ].points
             for input_index in valid_input_indexes:
-                getattr(self.wafer, annotation_type.name)[input_index] = {}
+                # getattr(self.wafer, annotation_type.name)[input_index] = {}
                 propagated_points = GeometryCalculator.propagate_points(
                     self.wafer.sections[section_id].points,
                     annotation_points,
