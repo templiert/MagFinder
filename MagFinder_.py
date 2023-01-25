@@ -1811,25 +1811,27 @@ class KeyListener(KeyAdapter):
         stack = self.wafer.image.getStack()
         n_slices = self.wafer.image.getNSlices()
         n_rows, n_cols = get_square_row_col(n_slices)
+        width, height = stack.getWidth(), stack.getHeight()
 
         # adjust handle/stroke size depending on image dimensions
-        im_w = self.wafer.image.getWidth()
+        width = self.wafer.image.getWidth()
         montage_factor = (
-            1 if im_w < LOCAL_SIZE_STANDARD else LOCAL_SIZE_STANDARD / float(im_w)
+            1 if width < LOCAL_SIZE_STANDARD else LOCAL_SIZE_STANDARD / float(width)
         )
-        if im_w < LOCAL_SIZE_STANDARD:
+        if width < LOCAL_SIZE_STANDARD:
             handle_size = 5
             stroke_size = 3
         else:
-            handle_size = 1 * intr(im_w / LOCAL_SIZE_STANDARD)
-            stroke_size = 0.2 * im_w / LOCAL_SIZE_STANDARD
+            handle_size = 1 * intr(width / LOCAL_SIZE_STANDARD)
+            stroke_size = 1 * width / LOCAL_SIZE_STANDARD
 
         flattened_ims = []
         for id_serial, section_id in enumerate(self.wafer.serial_order):
             im_p = stack.getProcessor(id_serial + 1).duplicate()
-            flattened = ImagePlus("flattened", im_p)
             # for review, intercalate a bare image without rois
-            flattened_ims.append(flattened)
+            bare = ImagePlus("flattened", im_p)
+            flattened = ImagePlus("flattened", im_p)
+            flattened.setTitle("section-{:04}".format(section_id))
             for roi in self.manager.iterator():
                 if "roi-{:04}".format(section_id) in roi.getName():
                     cloned_roi = roi.clone()
@@ -1837,26 +1839,22 @@ class KeyListener(KeyAdapter):
                     cloned_roi.setStrokeWidth(stroke_size)
                     flattened.setRoi(cloned_roi)
                     flattened = flattened.flatten()
-            flattened.setTitle("section-{:04}".format(section_id))
             flattened_ims.append(flattened)
-        flattened_stack = ImageStack(
-            flattened_ims[0].getWidth(), flattened_ims[0].getHeight()
-        )
+            flattened_ims.append(bare)
+        flattened_stack = ImageStack(width, height)
         for flattened in flattened_ims:
             flattened_stack.addSlice(flattened.getTitle(), flattened.getProcessor())
         im_flattened_stack = ImagePlus("flattened_stack", flattened_stack)
+        path_annotated_stack = os.path.join(self.wafer.root, "annotated_stack.tif")
+        IJ.save(im_flattened_stack, path_annotated_stack)
         im_flattened_stack.close()
 
         # rebuild the stack without the intercalated bare images for the montage
-        flattened_ims = flattened_ims[1::2]
-        flattened_stack = ImageStack(
-            flattened_ims[0].getWidth(), flattened_ims[0].getHeight()
-        )
+        flattened_ims = flattened_ims[0::2]
+        flattened_stack = ImageStack(width, height)
         for flattened in flattened_ims:
             flattened_stack.addSlice(flattened.getTitle(), flattened.getProcessor())
         im_flattened_stack = ImagePlus("flattened_stack", flattened_stack)
-        path_flattened_stack = os.path.join(self.wafer.root, "annotated_stack.tif")
-        IJ.save(im_flattened_stack, path_flattened_stack)
         montage = montageMaker.makeMontage2(
             im_flattened_stack,
             n_rows,
