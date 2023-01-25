@@ -32,9 +32,7 @@ from java.util.zip import GZIPInputStream
 from mpicbg.models import Point, PointMatch, RigidModel2D
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
 from net.imglib2.interpolation.randomaccess import (
-    NearestNeighborInterpolatorFactory,
-    NLinearInterpolatorFactory,
-)
+    NearestNeighborInterpolatorFactory, NLinearInterpolatorFactory)
 from net.imglib2.realtransform import AffineTransform2D
 from net.imglib2.realtransform import RealViews as RV
 from net.imglib2.view import Views
@@ -1783,6 +1781,10 @@ class KeyListener(KeyAdapter):
             self.wafer.manager_to_wafer()
             self.wafer.compute_stage_order()
             self.wafer.save()
+        elif keycode == KeyEvent.VK_EQUALS:
+            IJ.run("In [+]")
+        elif keycode == KeyEvent.VK_MINUS:
+            IJ.run("Out [-]")
         elif keycode == KeyEvent.VK_L:
             self.wafer.export_transforms()
         if keycode == KeyEvent.VK_H:
@@ -1817,10 +1819,6 @@ class KeyListener(KeyAdapter):
             toggle_fill(AnnotationType.FOCUS)
         if keycode == KeyEvent.VK_0:
             toggle_labels()
-        if keycode == KeyEvent.VK_EQUALS:
-            IJ.run("In [+]")
-        if keycode == KeyEvent.VK_MINUS:
-            IJ.run("Out [-]")
         if keycode == KeyEvent.VK_UP:
             move_fov(Direction.UP, self.wafer)
         if keycode == KeyEvent.VK_DOWN:
@@ -2551,7 +2549,7 @@ if __name__ == "__main__":
             "Zoom in/out"
             + print_list(
                 "[Ctrl] + mouse wheel",
-                "[+] / [-]",
+                "[+]/[-]",
             ),
             "Move up/down" + print_list("mouse wheel", "[&uarr] / [&darr]"),
             "Move left/right"
@@ -2607,6 +2605,7 @@ if __name__ == "__main__":
             "[D]/[F], [C]/[V], [E]/[R], same as lowercase commands above but navigates "
             + tag("sections", "u")
             + " instead of annotations",
+            "[+]/[-] zoom in/out",
             "If you lose the current annotation (by clicking outside of the annotation), then press [d],[f] or use the mouse wheel to make the annotation appear again.",
         )
         + tag("Action", "h3")
