@@ -42,8 +42,8 @@ from org.apache.commons.io import FileUtils
 
 sys.path.append(IJ.getDirectory("plugins"))
 
-import MagReorderer
 from geometrycalculator import GeometryCalculator
+from magreorderer import MagReorderer
 
 DEBUG = False
 
@@ -1586,7 +1586,7 @@ class KeyListener(KeyAdapter):
         keycode = event.getKeyCode()
         event.consume()
         if event.getKeyCode() == KeyEvent.VK_J and self.wafer.mode is Mode.GLOBAL:
-            MagReorderer.MagReorderer(self.wafer).reorder()
+            MagReorderer(self.wafer).reorder()
         elif keycode == KeyEvent.VK_S:
             self.wafer.save()
         elif keycode == KeyEvent.VK_Q:  # terminate and save
