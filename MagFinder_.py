@@ -107,6 +107,13 @@ def get_square_row_col(n):
     return n_rows, n_cols
 
 
+class Safety(object):
+    """Safety level for shortcuts with user interaction"""
+
+    STRICT = "strict"
+    RELAXED = "relaxed"
+
+
 class Neighbor(object):
     PREVIOUS = "previous"
     NEXT = "next"
@@ -1037,6 +1044,8 @@ class Wafer(object):
         """Renumbering the sections to have consecutive numbers without gaps:
         "0,1,4,5,7 -> 0,1,2,3,4"
         """
+        if not user_confirmation("renumber the sections"):
+            return
         if self.mode is Mode.LOCAL:
             dlog("Closing local mode. Section renumbering will be done in global mode")
             self.close_mode()
@@ -1175,6 +1184,10 @@ class Wafer(object):
 
     def push_section(self, direction):
         """Pushes the currently displayed section backward or forward in the serial order"""
+        if not user_confirmation(
+            "push a section and therefore modify the serial order"
+        ):
+            return
         delta = -1 if direction is Neighbor.PREVIOUS else 1
         id_section = self.get_current_id_section_local()
         id_serial = self.serial_order.index(id_section)
@@ -1821,6 +1834,8 @@ class KeyListener(KeyAdapter):
         if keycode == KeyEvent.VK_K:
             self.wafer.transfer_from_source_wafer()
         if keycode == KeyEvent.VK_Y:
+            if not user_confirmation("reverse the serial order"):
+                return
             self.wafer.serial_order = self.wafer.serial_order[::-1]
 
     def handle_key_m_global(self):
@@ -1953,6 +1968,9 @@ class KeyListener(KeyAdapter):
 
         drawn_roi.setName(annotation_name)
         annotation_type, section_id, annotation_id = type_id(annotation_name)
+        if self.wafer.mode is Mode.LOCAL and annotation_type is AnnotationType.SECTION:
+            if not user_confirmation("modify the current *section*"):
+                return
         if self.wafer.mode is Mode.LOCAL:
             drawn_roi.setHandleSize(annotation_type.handle_size_local)
         else:
@@ -2229,6 +2247,12 @@ def get_OK(text, window_name="User prompt"):
     focus_on_ok(gd)
     gd.showDialog()
     return gd.wasOKed()
+
+
+def user_confirmation(text):
+    if SAFETY is Safety.RELAXED:
+        return True
+    return get_OK("Are you sure you want to {}?".format(text), "Confirmation")
 
 
 def get_indexes_from_user_string(userString):
@@ -2607,6 +2631,7 @@ if __name__ == "__main__":
         + "<br><br><br></html>"
     )
 
+    SAFETY = Safety.STRICT
     initial_ij_key_listeners = IJ.getInstance().getKeyListeners()
     wafer = Wafer()
     wafer.start_global_mode()
