@@ -1995,7 +1995,8 @@ class KeyListener(KeyAdapter):
         for id_serial, section_id in enumerate(self.wafer.serial_order):
             im_p = stack.getProcessor(id_serial + 1).duplicate()
             flattened = ImagePlus("flattened", im_p)
-
+            # for review, intercalate a bare image without rois
+            flattened_ims.append(flattened)
             for roi in self.manager.iterator():
                 if "roi-{:04}".format(section_id) in roi.getName():
                     cloned_roi = roi.clone()
@@ -2005,6 +2006,16 @@ class KeyListener(KeyAdapter):
                     flattened = flattened.flatten()
             flattened.setTitle("section-{:04}".format(section_id))
             flattened_ims.append(flattened)
+        flattened_stack = ImageStack(
+            flattened_ims[0].getWidth(), flattened_ims[0].getHeight()
+        )
+        for flattened in flattened_ims:
+            flattened_stack.addSlice(flattened.getTitle(), flattened.getProcessor())
+        im_flattened_stack = ImagePlus("flattened_stack", flattened_stack)
+        im_flattened_stack.close()
+
+        # rebuild the stack without the intercalated bare images for the montage
+        flattened_ims = flattened_ims[1::2]
         flattened_stack = ImageStack(
             flattened_ims[0].getWidth(), flattened_ims[0].getHeight()
         )
