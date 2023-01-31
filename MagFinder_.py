@@ -1256,9 +1256,13 @@ class Annotation(object):
         return self.poly.containsPoint(*point)
 
     def compute_centroid(self):
-        # TODO confirm that python computation not much slower than java version
-        # poly_centroid = list(self.poly.getContourCentroid())
-        # warning: small discrepancy with python version
+        """Computes area centroid
+        list(self.poly.getContourCentroid()) really is the centroid
+        (as opposed to the barycenter of the contour vertices)
+        see https://github.com/imagej/ImageJ/blob/master/ij/gui/Roi.java#L2681
+        01/2023 must temporarily keep the vertices contour as the fix is a breaking change
+        """
+        ## barycenter of the contour vertices
         if len(self) == 1:
             return self.points[0]
         x_sum = sum([p[0] for p in self.points])
@@ -1806,7 +1810,7 @@ class KeyListener(KeyAdapter):
         dlog("Annotation {} added".format(annotation_name))
 
     def handle_key_m_local(self):
-        """Saves overview"""
+        """Saves low-res local overview"""
         montageMaker = MontageMaker()
         stack = self.wafer.image.getStack()
         n_slices = self.wafer.image.getNSlices()
@@ -1841,6 +1845,8 @@ class KeyListener(KeyAdapter):
                     flattened = flattened.flatten()
             flattened_ims.append(flattened)
             flattened_ims.append(bare)
+
+        # build the stack with intercalated bare images
         flattened_stack = ImageStack(width, height)
         for flattened in flattened_ims:
             flattened_stack.addSlice(flattened.getTitle(), flattened.getProcessor())
@@ -1849,11 +1855,9 @@ class KeyListener(KeyAdapter):
         IJ.save(im_flattened_stack, path_annotated_stack)
         im_flattened_stack.close()
 
-        # rebuild the stack without the intercalated bare images for the montage
-        flattened_ims = flattened_ims[0::2]
-        flattened_stack = ImageStack(width, height)
-        for flattened in flattened_ims:
-            flattened_stack.addSlice(flattened.getTitle(), flattened.getProcessor())
+        # remove the intercalated bare images and save a montage
+        for n in range(len(self.wafer), 1, -2):
+            flattened_stack.deleteSlice(n)
         im_flattened_stack = ImagePlus("flattened_stack", flattened_stack)
         montage = montageMaker.makeMontage2(
             im_flattened_stack,
