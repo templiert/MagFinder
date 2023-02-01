@@ -611,6 +611,8 @@ def intr(x):
 
 
 class MagReorderer(object):
+    """Reordering of sections"""
+
     def __init__(self, wafer):
         dlog("Starting MagReorderer ...")
         self.user_params = self.get_user_params()
@@ -788,7 +790,7 @@ class MagReorderer(object):
         )
         return downsampling_factor
 
-    def reorder(self):
+    def reorder(self, annotation_types):
         """
         Reorders the sections based on the ROI defined in each section
         """
@@ -838,7 +840,7 @@ class MagReorderer(object):
         # alignment of ordered sections
         self.align_sections()
         if self.user_params["export_highres"]:
-            self.export_highres()
+            self.export_highres(annotation_types)
         # self.show_roi_stack()
         # self.show_straight_roi_stack()
 
@@ -1179,11 +1181,18 @@ class MagReorderer(object):
         self.wafer.wafer_to_manager()
         dlog("The sections have been updated".center(100, "-"))
 
-    def export_highres(self):
-        dlog("High res export ...")
+    def export_highres(self, annotation_types):
+        dlog("High resolution export ...")
         dir_export = mkdir_p(os.path.join(self.working_folder, "export_high_res"))
         halfsize = int(0.6 * self.highres_w)
         high_res_path = self.get_im_path(-1)
+
+        scale_upsampling = AffineTransform2D()
+        scale_upsampling.scale(self.downsampling_factor)
+
+        translate_half_window = AffineTransform2D()
+        translate_half_window.translate(halfsize, halfsize)
+
         for id_serial, id_section in enumerate(self.wafer.serial_order):
             section = self.wafer.sections[id_section]
             centroid_highres = [self.downsampling_factor * v for v in section.centroid]
@@ -1196,13 +1205,42 @@ class MagReorderer(object):
                 self.user_params["channel"],
             )
             rotate(im, section.angle)
-            IJ.save(
-                im,
-                os.path.join(
-                    dir_export, "section_{:04}_{:04}.tif".format(id_serial, id_section)
-                ),
+
+            annotation_transform = AffineTransform2D()
+            annotation_transform.preConcatenate(self.wafer.transforms[id_section])
+            annotation_transform.preConcatenate(scale_upsampling)
+            annotation_transform.preConcatenate(translate_half_window)
+
+            for annotation_type in annotation_types:
+                annotation = getattr(self.wafer, annotation_type.name).get(id_section)
+                if annotation is None:
+                    continue
+                local_poly = self.GC.transform_points_to_poly(
+                    annotation.points, annotation_transform
+                )
+                local_poly.setName(str(annotation))
+                local_poly.setStrokeColor(annotation_type.color)
+                local_poly.setImage(im)
+                local_poly.setHandleSize(annotation_type.handle_size_local)
+                im.setRoi(local_poly)
+                im = im.flatten()
+            if id_section not in self.wafer.rois:
+                continue
+            for _, subroi in sorted(self.wafer.rois[id_section].iteritems()):
+                local_poly = self.GC.transform_points_to_poly(
+                    subroi.points, annotation_transform
+                )
+                local_poly.setName(str(subroi))
+                local_poly.setStrokeColor(subroi.type_.color)
+                local_poly.setImage(im)
+                local_poly.setHandleSize(subroi.type_.handle_size_local)
+                im.setRoi(local_poly)
+                im = im.flatten()
+            path_im = os.path.join(
+                dir_export, "section_{:04}_{:04}.tif".format(id_serial, id_section)
             )
-        dlog("High res export completed")
+            IJ.save(im, path_im)
+        dlog("High resolution export completed")
 
     def show_roi_stack(self):
         user_view_size = 1000

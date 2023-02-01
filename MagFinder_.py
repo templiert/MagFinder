@@ -407,9 +407,10 @@ class Wafer(object):
                 AnnotationType.MAGNET,
             ]:
                 annotation = getattr(self, annotation_type.name).get(section_id)
-                if annotation is not None:
-                    self.manager.addRoi(annotation.poly)
-                    annotation.poly.setHandleSize(annotation_type.handle_size_global)
+                if annotation is None:
+                    continue
+                self.manager.addRoi(annotation.poly)
+                annotation.poly.setHandleSize(annotation_type.handle_size_global)
             if section_id in self.rois:
                 for _, subroi in sorted(self.rois[section_id].iteritems()):
                     self.manager.addRoi(subroi.poly)
@@ -423,27 +424,28 @@ class Wafer(object):
                 AnnotationType.MAGNET,
             ]:
                 annotation = getattr(self, annotation_type.name).get(section_id)
-                if annotation is not None:
-                    local_poly = self.GC.transform_points_to_poly(
-                        annotation.points, self.poly_transforms[section_id]
-                    )
-                    local_poly.setName(str(annotation))
-                    local_poly.setStrokeColor(annotation_type.color)
-                    local_poly.setImage(self.image)
-                    local_poly.setPosition(0, id_order + 1, 0)
-                    local_poly.setHandleSize(annotation_type.handle_size_local)
-                    self.manager.addRoi(local_poly)
-                    poly = self.GC.transform_points_to_poly(
-                        [annotation.centroid], self.poly_transforms[section_id]
-                    )
-                    if DEBUG:
-                        IJ.log(
-                            "{} | local {} {}".format(
-                                repr(annotation),
-                                poly.getFloatPolygon().xpoints,
-                                poly.getFloatPolygon().ypoints,
-                            )
+                if annotation is None:
+                    continue
+                local_poly = self.GC.transform_points_to_poly(
+                    annotation.points, self.poly_transforms[section_id]
+                )
+                local_poly.setName(str(annotation))
+                local_poly.setStrokeColor(annotation_type.color)
+                local_poly.setImage(self.image)
+                local_poly.setPosition(0, id_order + 1, 0)
+                local_poly.setHandleSize(annotation_type.handle_size_local)
+                self.manager.addRoi(local_poly)
+                poly = self.GC.transform_points_to_poly(
+                    [annotation.centroid], self.poly_transforms[section_id]
+                )
+                if DEBUG:
+                    IJ.log(
+                        "{} | local {} {}".format(
+                            repr(annotation),
+                            poly.getFloatPolygon().xpoints,
+                            poly.getFloatPolygon().ypoints,
                         )
+                    )
             if section_id not in self.rois:
                 continue
             for _, subroi in sorted(self.rois[section_id].iteritems()):
@@ -1590,7 +1592,15 @@ class KeyListener(KeyAdapter):
         keycode = event.getKeyCode()
         event.consume()
         if event.getKeyCode() == KeyEvent.VK_J and self.wafer.mode is Mode.GLOBAL:
-            MagReorderer(self.wafer).reorder()
+            # passing annotation_types as a workaround to prevent circular import
+            # to resolve later by splitting AnnotationType to another file
+            MagReorderer(self.wafer).reorder(
+                [
+                    AnnotationType.SECTION,
+                    AnnotationType.FOCUS,
+                    AnnotationType.MAGNET,
+                ]
+            )
         elif keycode == KeyEvent.VK_S:
             self.wafer.save()
         elif keycode == KeyEvent.VK_Q:  # terminate and save
@@ -1810,7 +1820,14 @@ class KeyListener(KeyAdapter):
         dlog("Annotation {} added".format(annotation_name))
 
     def handle_key_m_local(self):
-        """Saves low-res local overview"""
+        """Saves low-res and high-res local overviews"""
+        MagReorderer(self.wafer).export_highres(
+            [
+                AnnotationType.SECTION,
+                AnnotationType.FOCUS,
+                AnnotationType.MAGNET,
+            ]
+        )
         montageMaker = MontageMaker()
         stack = self.wafer.image.getStack()
         n_slices = self.wafer.image.getNSlices()
