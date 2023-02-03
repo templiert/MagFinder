@@ -1847,19 +1847,20 @@ class KeyListener(KeyAdapter):
             stroke_size = 1 * width / LOCAL_SIZE_STANDARD
 
         flattened_ims = []
-        for id_serial, section_id in enumerate(self.wafer.serial_order):
+        for id_serial, id_section in enumerate(self.wafer.serial_order):
+            title = "section_magc_{:04}_serial_{:04}".format(id_section, id_serial)
             im_p = stack.getProcessor(id_serial + 1).duplicate()
             # for review, intercalate a bare image without rois
-            bare = ImagePlus("flattened", im_p)
-            flattened = ImagePlus("flattened", im_p)
-            flattened.setTitle("section-{:04}".format(section_id))
+            bare = ImagePlus(title, im_p)
+            flattened = ImagePlus("", im_p)
             for roi in self.manager.iterator():
-                if "roi-{:04}".format(section_id) in roi.getName():
+                if "roi-{:04}".format(id_section) in roi.getName():
                     cloned_roi = roi.clone()
                     cloned_roi.setHandleSize(handle_size)
                     cloned_roi.setStrokeWidth(stroke_size)
                     flattened.setRoi(cloned_roi)
                     flattened = flattened.flatten()
+            flattened.setTitle(title)
             flattened_ims.append(flattened)
             flattened_ims.append(bare)
 
@@ -1867,7 +1868,7 @@ class KeyListener(KeyAdapter):
         flattened_stack = ImageStack(width, height)
         for flattened in flattened_ims:
             flattened_stack.addSlice(flattened.getTitle(), flattened.getProcessor())
-        im_flattened_stack = ImagePlus("flattened_stack", flattened_stack)
+        im_flattened_stack = ImagePlus("annotated_stack", flattened_stack)
         path_annotated_stack = os.path.join(self.wafer.root, "annotated_stack.tif")
         IJ.save(im_flattened_stack, path_annotated_stack)
         im_flattened_stack.close()

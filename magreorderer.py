@@ -1194,6 +1194,7 @@ class MagReorderer(object):
         translate_half_window.translate(halfsize, halfsize)
 
         for id_serial, id_section in enumerate(self.wafer.serial_order):
+            title = "section_serial_{:04}_magc_{:04}".format(id_serial, id_section)
             section = self.wafer.sections[id_section]
             centroid_highres = [self.downsampling_factor * v for v in section.centroid]
             im = open_subpixel_crop(
@@ -1236,9 +1237,8 @@ class MagReorderer(object):
                 local_poly.setHandleSize(subroi.type_.handle_size_local)
                 im.setRoi(local_poly)
                 im = im.flatten()
-            path_im = os.path.join(
-                dir_export, "section_{:04}_{:04}.tif".format(id_serial, id_section)
-            )
+            im.setTitle(title)
+            path_im = os.path.join(dir_export, "{}.tif".format(title))
             IJ.save(im, path_im)
         dlog("High resolution export completed")
 
