@@ -2455,7 +2455,7 @@ if __name__ == "__main__":
             "[q] quits. Everything will be saved",
             "[s] saves to file (happens already automatically when toggling [t] or quitting [q])",
             "[1]/[2] pushes the currently displayed section backward/forward. It does not recompute alignment.",
-            "[m] exports a summary montage",
+            "[m] exports a summary montage and an annotated stack",
             (
                 "[o]   (letter o) computes the section order that minimizes the travel of the microscope stage"
                 " (not the same as the serial sectioning order of the sections)."
