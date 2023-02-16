@@ -638,10 +638,22 @@ class MagReorderer(object):
         )
         self.sift_order_path = os.path.join(self.working_folder, "sift_order.txt")
         # size of the extracted roi in the high res image
-        self.highres_w = intr(
-            Math.sqrt(next(iter(self.wafer.rois.values()))[0].area)
-            * self.downsampling_factor
-        )
+        width = height = 0
+        for rois in self.wafer.rois.values():
+            points = [point for roi in rois.values() for point in roi.points]
+            box = Polygon(
+                [int(point[0]) for point in points],
+                [int(point[1]) for point in points],
+                len(points),
+            ).getBounds()
+            width = max(width, box.width)
+            height = max(height, box.height)
+        self.highres_w = intr(Math.sqrt(width * height) * self.downsampling_factor * 2)
+
+        # self.highres_w = intr(
+        #    Math.sqrt(next(iter(self.wafer.rois.values()))[0].area)
+        #    * self.downsampling_factor
+        # )
 
     def get_user_params(self):
         gd = GenericDialogPlus("MagReorderer parameters")
