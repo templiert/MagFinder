@@ -48,6 +48,7 @@ from magreorderer import MagReorderer
 DEBUG = False
 
 # OFFSET_TO_LOCAL_CENTER = -0.5
+# OFFSET_TO_LOCAL_CENTER = +0.5
 OFFSET_TO_LOCAL_CENTER = 0
 
 SIZE_HANDLE = 15
@@ -708,8 +709,11 @@ class Wafer(object):
             aff_copy = aff.copy()
             poly_translation = AffineTransform2D()
 
+            # factor = 0
+            # rangle = section.angle * Math.PI / 180.0
             translation_to_local_center = [
-                int(0.5 * v) + OFFSET_TO_LOCAL_CENTER for v in self.local_display_size
+                0.5 * self.local_display_size[0],  # + factor * Math.cos(rangle),
+                0.5 * self.local_display_size[1],  # + factor * Math.sin(rangle),
             ]
             poly_translation.translate(translation_to_local_center)
 
@@ -737,8 +741,8 @@ class Wafer(object):
                 RV.transform(
                     Views.interpolate(
                         Views.extendZero(self.img_global),
-                        # NLinearInterpolatorFactory()
-                        NearestNeighborInterpolatorFactory(),
+                        NLinearInterpolatorFactory()
+                        # NearestNeighborInterpolatorFactory(),
                     ),
                     self.transforms[o],
                 ),
