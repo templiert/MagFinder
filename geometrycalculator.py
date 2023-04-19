@@ -97,6 +97,13 @@ class GeometryCalculator(object):
         return imglib2_transform
 
     @classmethod
+    def to_translation(aff):
+        """The same transform with only the translation component"""
+        t = AffineTransform2D()
+        t.translate([aff.get(0, 2), aff.get(1, 2)])
+        return t
+
+    @classmethod
     def transform_points_to_poly(cls, source_points, aff):
         target_points = cls.transform_points(source_points, aff)
         return cls.points_to_poly(target_points)

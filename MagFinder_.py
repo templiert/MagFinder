@@ -30,6 +30,7 @@ from java.nio.file import Files, Paths
 from java.util import HashSet
 from java.util.zip import GZIPInputStream
 from mpicbg.models import Point, PointMatch, RigidModel2D
+from net.imglib2.img import ImagePlusAdapter
 from net.imglib2.img.display.imagej import ImageJFunctions as IL
 from net.imglib2.interpolation.randomaccess import (
     NearestNeighborInterpolatorFactory,
@@ -722,8 +723,11 @@ class Wafer(object):
                 section_id
             ].inverse()
 
-    def create_local_stack(self):
+    def create_local_stack(self, straight_transforms=None):
         """Creates the local stack with imglib2 framework"""
+        transforms = (
+            self.transforms if straight_transforms is None else straight_transforms
+        )
         display_params = (
             [
                 int(-0.5 * self.local_display_size[0]),
@@ -744,24 +748,72 @@ class Wafer(object):
                         NLinearInterpolatorFactory()
                         # NearestNeighborInterpolatorFactory(),
                     ),
-                    self.transforms[o],
+                    transforms[o],
                 ),
                 display_params[0],
                 display_params[1],
             )
             for o in self.serial_order
         ]
-        self.img_local = Views.permute(
-            Views.addDimension(Views.stack(imgs), 0, 0), 3, 2
-        )
-        IL.show(self.img)
-        self.image_local = IJ.getImage()
+        img_local = Views.permute(Views.addDimension(Views.stack(imgs), 0, 0), 3, 2)
+        if straight_transforms is None:
+            self.img_local = img_local
+            IL.show(self.img)
+            self.image_local = IJ.getImage()
+        else:
+            IL.show(img_local)
+            im = IJ.getImage()
+            im.hide()
+            return im
+
         if DEBUG:
             IJ.log(
                 "image local {} - {}".format(
                     self.image_local.getWidth(), self.image_local.getHeight()
                 )
             )
+
+    def create_local_straight_stack(self):
+        straight_transforms = {}
+        for id_magc in self.sections:
+            t = AffineTransform2D()
+            t.translate(self.sections[id_magc].centroid)
+            t = t.inverse()
+            straight_transforms[id_magc] = t
+        im = self.create_local_stack(straight_transforms).getStack()
+        w, h = im.getWidth(), im.getHeight()
+
+        flattened_ims = []
+        for id_serial, id_section in enumerate(self.serial_order):
+            if id_section not in self.magnets:
+                continue
+            title = "section_magc_{:04}_serial_{:04}".format(id_section, id_serial)
+            im_p = im.getProcessor(id_serial + 1).duplicate()
+            flattened = ImagePlus("", im_p)
+
+            centroid_magnet = self.magnets[id_section].centroid
+            centroid_section = self.sections[id_section].centroid
+
+            roi_magnet = PointRoi(
+                centroid_magnet[0] - centroid_section[0] + 0.5 * w,
+                centroid_magnet[1] - centroid_section[1] + 0.5 * h,
+            )
+            roi_magnet.setHandleSize(2)
+            roi_magnet.setStrokeWidth(1)
+            flattened.setRoi(roi_magnet)
+            flattened = flattened.flatten()
+            flattened.setTitle(title)
+            bare = ImagePlus(title, im_p)
+            flattened_ims.append(flattened)
+            flattened_ims.append(bare)
+
+        flattened_stack = ImageStack(w, h)
+        for flattened in flattened_ims:
+            flattened_stack.addSlice(flattened.getTitle(), flattened.getProcessor())
+        im_flattened_stack = ImagePlus("straight_magnet", flattened_stack)
+        IJ.save(
+            im_flattened_stack, os.path.join(self.root, "overview_straight_magnet.tiff")
+        )
 
     def add(self, annotation_type, poly, annotation_id):
         """
@@ -1664,6 +1716,8 @@ class KeyListener(KeyAdapter):
             move_fov(Direction.LEFT, self.wafer)
         if keycode == KeyEvent.VK_M:
             self.handle_key_m_global()
+        if keycode == KeyEvent.VK_U:
+            self.wafer.create_local_straight_stack()
         if keycode == KeyEvent.VK_K:
             self.wafer.transfer_from_source_wafer()
         if keycode == KeyEvent.VK_Y:
