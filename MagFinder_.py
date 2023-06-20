@@ -1,3 +1,7 @@
+"""
+Top-left of pixel is (0  , 0  )
+Center of pixel is   (0.5, 0.5)
+"""
 from __future__ import with_statement
 
 import itertools
@@ -67,6 +71,10 @@ ACCEPTED_IMAGE_FORMATS = (
     ".jpg",
     ".jpeg",
 )
+
+TRANSFORM_DISPLAY = AffineTransform2D()
+TRANSFORM_DISPLAY.translate([-0.5, -0.5])
+TRANSFORM_DISPLAY_INVERSE = TRANSFORM_DISPLAY.inverse()
 
 
 def mkdir_p(path):
@@ -368,6 +376,11 @@ class Wafer(object):
         self.clear_annotations()
         for roi in self.manager.iterator():
             annotation_type, section_id, annotation_id = type_id(roi.getName())
+            # if self.mode is Mode.GLOBAL and roi.size() <= 2:
+            if roi.size() <= 2:
+                roi = GeometryCalculator.transform_poly(
+                    poly=roi, aff=TRANSFORM_DISPLAY_INVERSE
+                )
             self.add(
                 annotation_type,
                 roi,
@@ -399,10 +412,10 @@ class Wafer(object):
             # sort of mentioned in docs of Roi:
             # https://javadoc.io/static/net.imagej/ij/1.53j/ij/gui/Roi.html
             # but still leads to weird behavior
-            self.manager.addRoi(landmark.poly)
+            self.manager.addRoi(landmark.poly_display)
             landmark.poly.setHandleSize(landmark.type_.handle_size_global)
         for section_id, section in sorted(self.sections.iteritems()):
-            self.manager.addRoi(section.poly)
+            self.manager.addRoi(section.poly_display)
             section.poly.setHandleSize(section.type_.handle_size_global)
             for annotation_type in [
                 AnnotationType.FOCUS,
@@ -411,11 +424,11 @@ class Wafer(object):
                 annotation = getattr(self, annotation_type.name).get(section_id)
                 if annotation is None:
                     continue
-                self.manager.addRoi(annotation.poly)
+                self.manager.addRoi(annotation.poly_display)
                 annotation.poly.setHandleSize(annotation_type.handle_size_global)
             if section_id in self.rois:
                 for _, subroi in sorted(self.rois[section_id].iteritems()):
-                    self.manager.addRoi(subroi.poly)
+                    self.manager.addRoi(subroi.poly_display)
                     subroi.poly.setHandleSize(annotation_type.handle_size_global)
 
     def wafer_to_manager_local(self):
@@ -428,8 +441,17 @@ class Wafer(object):
                 annotation = getattr(self, annotation_type.name).get(section_id)
                 if annotation is None:
                     continue
+
+                transform_poly_display = AffineTransform2D()
+                transform_poly_display.preConcatenate(self.poly_transforms[section_id])
+                transform_poly_display.preConcatenate(TRANSFORM_DISPLAY)
+                if len(annotation) <= 2:
+                    transform_poly = transform_poly_display
+                else:
+                    transform_poly = self.poly_transforms[section_id]
+
                 local_poly = self.GC.transform_points_to_poly(
-                    annotation.points, self.poly_transforms[section_id]
+                    annotation.points, transform_poly
                 )
                 local_poly.setName(str(annotation))
                 local_poly.setStrokeColor(annotation_type.color)
@@ -437,22 +459,26 @@ class Wafer(object):
                 local_poly.setPosition(0, id_order + 1, 0)
                 local_poly.setHandleSize(annotation_type.handle_size_local)
                 self.manager.addRoi(local_poly)
-                poly = self.GC.transform_points_to_poly(
-                    [annotation.centroid], self.poly_transforms[section_id]
-                )
-                if DEBUG:
-                    IJ.log(
-                        "{} | local {} {}".format(
-                            repr(annotation),
-                            poly.getFloatPolygon().xpoints,
-                            poly.getFloatPolygon().ypoints,
-                        )
-                    )
+                # poly = self.GC.transform_points_to_poly(
+                #    [annotation.centroid], self.poly_transforms[section_id]
+                # )
+                # if DEBUG:
+                #    IJ.log(
+                #        "{} | local {} {}".format(
+                #            repr(annotation),
+                #            poly.getFloatPolygon().xpoints,
+                #            poly.getFloatPolygon().ypoints,
+                #        )
+                #    )
             if section_id not in self.rois:
                 continue
             for _, subroi in sorted(self.rois[section_id].iteritems()):
+                if len(subroi) <= 2:
+                    transform_poly = transform_poly_display
+                else:
+                    transform_poly = self.poly_transforms[section_id]
                 local_poly = self.GC.transform_points_to_poly(
-                    subroi.points, self.poly_transforms[section_id]
+                    subroi.points, transform_poly
                 )
                 local_poly.setName(str(subroi))
                 local_poly.setStrokeColor(subroi.type_.color)
@@ -460,17 +486,17 @@ class Wafer(object):
                 local_poly.setPosition(0, id_order + 1, 0)
                 local_poly.setHandleSize(subroi.type_.handle_size_local)
                 self.manager.addRoi(local_poly)
-                poly = self.GC.transform_points_to_poly(
-                    [subroi.centroid], self.poly_transforms[section_id]
-                )
-                if DEBUG:
-                    IJ.log(
-                        "{} | local {} {}".format(
-                            repr(subroi),
-                            poly.getFloatPolygon().xpoints,
-                            poly.getFloatPolygon().ypoints,
-                        )
-                    )
+                # poly = self.GC.transform_points_to_poly(
+                #    [subroi.centroid], self.poly_transforms[section_id]
+                # )
+                # if DEBUG:
+                #    IJ.log(
+                #        "{} | local {} {}".format(
+                #            repr(subroi),
+                #            poly.getFloatPolygon().xpoints,
+                #            poly.getFloatPolygon().ypoints,
+                #        )
+                #    )
 
     def clear_annotations(self):
         """Clears all annotations except the landmarks"""
@@ -837,11 +863,7 @@ class Wafer(object):
             self.serial_order.append(section_id)
             self.stage_order.append(section_id)
         if self.mode is Mode.GLOBAL:
-            annotation = Annotation(
-                annotation_type,
-                poly,
-                annotation_id,
-            )
+            annotation = Annotation(annotation_type, poly, annotation_id)
         else:
             # transform to global coordinates when adding from local mode
             annotation = Annotation(
@@ -1301,14 +1323,26 @@ class Annotation(object):
             return "{}.{:04}.{:02}".format(self.type_.string, *self.id_)
         return "{}.{:04}".format(self.type_.string, self.id_)
 
+    @property
+    def poly_display(self):
+        if len(self) > 2:
+            return self.poly
+        poly = GeometryCalculator.transform_points_to_poly(
+            source_points=self.points, aff=TRANSFORM_DISPLAY
+        )
+        self.set_poly_properties(poly=poly)
+        return poly
+
     def compute_area(self):
         """Returns bounding box area. getStatistics.pixelcount was too slow"""
         bounds = self.poly.getBounds()
         return bounds.getHeight() * bounds.getWidth()
 
-    def set_poly_properties(self):
-        self.poly.setName(str(self))
-        self.poly.setStrokeColor(self.type_.color)
+    def set_poly_properties(self, poly=None):
+        if poly is None:
+            poly = self.poly
+        poly.setName(str(self))
+        poly.setStrokeColor(self.type_.color)
 
     def contains(self, point):
         return self.poly.containsPoint(*point)

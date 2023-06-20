@@ -49,8 +49,16 @@ class GeometryCalculator(object):
     @staticmethod
     def poly_to_points(poly):
         float_polygon = poly.getFloatPolygon()
-        result = [[x, y] for x, y in zip(float_polygon.xpoints, float_polygon.ypoints)]
+        # result = [[x, y] for x, y in zip(float_polygon.xpoints, float_polygon.ypoints)]
+        result = list(zip(float_polygon.xpoints, float_polygon.ypoints))
         return result
+
+    @classmethod
+    def transform_poly(cls, poly, aff):
+        points = cls.poly_to_points(poly)
+        poly_transformed = cls.transform_points_to_poly(points, aff)
+        poly_transformed.setName(poly.getName())
+        return poly_transformed
 
     @staticmethod
     def points_to_flat_string(points):
