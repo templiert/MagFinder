@@ -72,9 +72,21 @@ ACCEPTED_IMAGE_FORMATS = (
     ".jpeg",
 )
 
+# these transforms are applied to annotations of lengths 1,2
+# because they are displayed by Fiji with a (0.5,0.5) offset
+# because they follow a different subpixel convention
+# we pre-apply TRANSFORM_DISPLAY when going from wafer -> manager
 TRANSFORM_DISPLAY = AffineTransform2D()
 TRANSFORM_DISPLAY.translate([-0.5, -0.5])
+# we pre-apply TRANSFORM_DISPLAY_INVERSE when going from manager -> wafer
 TRANSFORM_DISPLAY_INVERSE = TRANSFORM_DISPLAY.inverse()
+
+# these transforms fix the discrepancy between
+# the Fiji ROI convention: top-left corner of pixel
+# the Imglib2 convention: center of pixel
+TRANSFORM_SUBPIXEL = AffineTransform2D()
+TRANSFORM_SUBPIXEL.translate([0.5, 0.5])
+TRANSFORM_SUBPIXEL_INVERSE = TRANSFORM_SUBPIXEL.inverse()
 
 
 def mkdir_p(path):
@@ -720,34 +732,37 @@ class Wafer(object):
         1.self.transforms[section_key] transforms the global wafer image
         to an image in which the section section_key is centered at 0
         and has an angle of 0 degrees
-        2.the poly_transforms are almost like the self.transforms except that
-        they contain an offset due to the fact that an ImagePlus is displayed
-        with their top-left corner at 0,0 and not at -w/2,-h/2
+        2.the transform_poly is almost like the self.transforms except that
+            a. it contains an offset due to the fact that an ImagePlus is displayed
+            with their top-left corner at 0,0 and not at -w/2,-h/2
+            b. it does not contain the 0.5 offset change of basis to account for the fact
+            that ImageJ ROIs use top-left pixel corner vs pixel center from ImgLib2 transforms
         """
         _, _, display_size, _ = self.get_display_parameters()
         self.local_display_size = display_size
         for section_id, section in self.sections.iteritems():
-            # image transform
-            aff = AffineTransform2D()
-            aff.translate([-v for v in section.centroid])
-            aff.rotate(section.angle * Math.PI / 180.0)
-            self.transforms[section_id] = aff
-            # poly transform (there is an offset)
-            aff_copy = aff.copy()
-            poly_translation = AffineTransform2D()
+            # transform for the image
+            transform_section_bare = AffineTransform2D()
+            transform_section_bare.translate([-v for v in section.centroid])
+            transform_section_bare.rotate(section.angle * Math.PI / 180.0)
 
-            # factor = 0
-            # rangle = section.angle * Math.PI / 180.0
-            translation_to_local_center = [
-                0.5 * self.local_display_size[0],  # + factor * Math.cos(rangle),
-                0.5 * self.local_display_size[1],  # + factor * Math.sin(rangle),
-            ]
-            poly_translation.translate(translation_to_local_center)
-
-            self.poly_transforms[section_id] = aff_copy.preConcatenate(poly_translation)
-            self.poly_transforms_inverse[section_id] = self.poly_transforms[
-                section_id
-            ].inverse()
+            self.transforms[section_id] = self.GC.change_basis(
+                A=transform_section_bare,
+                B=TRANSFORM_SUBPIXEL,
+                B_inverse=TRANSFORM_SUBPIXEL_INVERSE,
+            )
+            # transform for the poly
+            translation_poly = AffineTransform2D()
+            translation_poly.translate(
+                [
+                    0.5 * self.local_display_size[0],
+                    0.5 * self.local_display_size[1],
+                ]
+            )
+            transform_poly = transform_section_bare.copy()
+            transform_poly.preConcatenate(translation_poly)
+            self.poly_transforms[section_id] = transform_poly
+            self.poly_transforms_inverse[section_id] = transform_poly.inverse()
 
     def create_local_stack(self, straight_transforms=None):
         """Creates the local stack with imglib2 framework"""

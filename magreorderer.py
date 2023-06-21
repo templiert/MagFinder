@@ -1260,7 +1260,7 @@ class MagReorderer(object):
             [-user_view_size, -user_view_size],
             [user_view_size, user_view_size],
         ]
-        (_, affine_transforms,) = deserialize_matching_outputs(
+        (_, affine_transforms) = deserialize_matching_outputs(
             self.neighbor_fine_sift_matches, self.user_params["percentage_cores"]
         )
 
@@ -1292,7 +1292,7 @@ class MagReorderer(object):
             [user_view_size, user_view_size],
         ]
 
-        (_, affine_transforms,) = deserialize_matching_outputs(
+        (_, affine_transforms) = deserialize_matching_outputs(
             self.neighbor_fine_sift_matches, self.user_params["percentage_cores"]
         )
 
@@ -1359,7 +1359,6 @@ def handle_keypress(keyEvent):
         KeyEvent.VK_LEFT,
         KeyEvent.VK_C,
     ]:
-
         is_c = keycode == KeyEvent.VK_C
         is_right = keycode == KeyEvent.VK_RIGHT
         is_left = keycode == KeyEvent.VK_LEFT

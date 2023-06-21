@@ -211,3 +211,12 @@ class GeometryCalculator(object):
         )
         target_points = [[x, y] for x, y in zip(target_points_x, target_points_y)]
         return target_points
+
+    @staticmethod
+    def change_basis(A, B, B_inverse=None):
+        """Change A into B basis. Does not modify A in place."""
+        aff = AffineTransform2D()
+        aff.concatenate(B.inverse() if B_inverse is None else B_inverse)
+        aff.concatenate(A)
+        aff.concatenate(B)
+        return aff
