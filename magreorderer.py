@@ -14,7 +14,6 @@ import importlib
 import io.scif.img.ImgOpener
 import itertools
 import os
-import sys
 import threading
 import time
 from collections import namedtuple
@@ -69,11 +68,14 @@ DEBUG = False
 
 ACCEPTED_IMAGE_FORMATS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
 
-# attempt at solving weird pixel offset
-# currently working settings for no downsampling
-OFFSET_CROP_OPEN = 0  # -0.5?
-OFFSET_ROI_TO_ZERO = 0  # +0.5?
-OFFSET_ZERO_TO_HALF_HIGHRES_FOV = 0  # -0.5?
+# these transforms fix the discrepancy between
+# the Fiji ROI convention: top-left corner of pixel
+# the Imglib2 convention: center of pixel
+TRANSFORM_SUBPIXEL = AffineTransform2D()
+TRANSFORM_SUBPIXEL.translate([0.5, 0.5])
+TRANSFORM_SUBPIXEL_INVERSE = TRANSFORM_SUBPIXEL.inverse()
+
+# TODO remnant of the obscure subpixel issue
 OFFSET_EXPORT_HIGHRES = 0.5  # OK for no downsampling
 
 
@@ -903,12 +905,8 @@ class MagReorderer(object):
         for crop_param in crop_params:
             highres_roi_im = open_subpixel_crop(
                 crop_param.highres_path,
-                crop_param.highres_centroid[0]
-                - 0.5 * crop_param.highres_w
-                + OFFSET_CROP_OPEN,
-                crop_param.highres_centroid[1]
-                - 0.5 * crop_param.highres_w
-                + OFFSET_CROP_OPEN,
+                crop_param.highres_centroid[0] - 0.5 * crop_param.highres_w,
+                crop_param.highres_centroid[1] - 0.5 * crop_param.highres_w,
                 crop_param.highres_w,
                 crop_param.highres_w,
                 crop_param.channel,
@@ -1085,9 +1083,7 @@ class MagReorderer(object):
         IJ.log("downsampling factor {}".format(self.downsampling_factor))
 
         translation_zero_to_half_highres_fov = AffineTransform2D()
-        translation_zero_to_half_highres_fov.translate(
-            2 * [0.5 * self.highres_w - OFFSET_ZERO_TO_HALF_HIGHRES_FOV]
-        )
+        translation_zero_to_half_highres_fov.translate(2 * [0.5 * self.highres_w])
 
         k1 = self.wafer.serial_order[0]
 
@@ -1095,8 +1091,8 @@ class MagReorderer(object):
         translation_ROI_to_zero = AffineTransform2D()
         translation_ROI_to_zero.translate(
             [
-                -self.wafer.rois[k1][0].centroid[0] + OFFSET_ROI_TO_ZERO,
-                -self.wafer.rois[k1][0].centroid[1] + OFFSET_ROI_TO_ZERO,
+                -self.wafer.rois[k1][0].centroid[0],
+                -self.wafer.rois[k1][0].centroid[1],
             ]
         )
 
@@ -1150,6 +1146,11 @@ class MagReorderer(object):
                 pair_local_transform = self.GC.to_imglib2_aff(
                     affine_transforms[(o2, o1)]
                 )
+                pair_local_transform = self.GC.change_basis(
+                    pair_local_transform,
+                    B=TRANSFORM_SUBPIXEL_INVERSE,
+                    B_inverse=TRANSFORM_SUBPIXEL,
+                )
                 transform_scaling = self.GC.get_imglib2_transform_scaling(
                     pair_local_transform
                 )
@@ -1165,8 +1166,8 @@ class MagReorderer(object):
             translation_ROI_to_zero = AffineTransform2D()
             translation_ROI_to_zero.translate(
                 [
-                    -self.wafer.rois[k2][0].centroid[0] + OFFSET_ROI_TO_ZERO,
-                    -self.wafer.rois[k2][0].centroid[1] + OFFSET_ROI_TO_ZERO,
+                    -self.wafer.rois[k2][0].centroid[0],
+                    -self.wafer.rois[k2][0].centroid[1],
                 ]
             )
             ROI_global_lowres_to_local_highres = AffineTransform2D()
@@ -1194,6 +1195,8 @@ class MagReorderer(object):
         dlog("The sections have been updated".center(100, "-"))
 
     def export_highres(self, annotation_types):
+        # TODO subpixel issue to revisit with
+        # new understanding of its root cause
         dlog("High resolution export ...")
         dir_export = mkdir_p(os.path.join(self.working_folder, "export_high_res"))
         halfsize = int(0.6 * self.highres_w)

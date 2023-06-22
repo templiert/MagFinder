@@ -52,9 +52,6 @@ from magreorderer import MagReorderer
 
 DEBUG = False
 
-# OFFSET_TO_LOCAL_CENTER = -0.5
-# OFFSET_TO_LOCAL_CENTER = +0.5
-OFFSET_TO_LOCAL_CENTER = 0
 
 SIZE_HANDLE = 15
 LOCAL_SIZE_STANDARD = 400  # for local summary
@@ -420,10 +417,6 @@ class Wafer(object):
                 # do not draw landmark if it is not visible,
                 # otherwise it creates a weird offset with negative coordinates
                 continue
-            # TODO PointRoi are displayed with 0.5 offset, but not PolygonRoi
-            # sort of mentioned in docs of Roi:
-            # https://javadoc.io/static/net.imagej/ij/1.53j/ij/gui/Roi.html
-            # but still leads to weird behavior
             self.manager.addRoi(landmark.poly_display)
             landmark.poly.setHandleSize(landmark.type_.handle_size_global)
         for section_id, section in sorted(self.sections.iteritems()):
