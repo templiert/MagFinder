@@ -72,11 +72,14 @@ ACCEPTED_IMAGE_FORMATS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
 # the Fiji ROI convention: top-left corner of pixel
 # the Imglib2 convention: center of pixel
 TRANSFORM_SUBPIXEL = AffineTransform2D()
+# TRANSFORM_SUBPIXEL.translate([0.5, 0.5]) CORRECT VALUE
 TRANSFORM_SUBPIXEL.translate([0.5, 0.5])
 TRANSFORM_SUBPIXEL_INVERSE = TRANSFORM_SUBPIXEL.inverse()
 
-# TODO remnant of the obscure subpixel issue
-OFFSET_EXPORT_HIGHRES = 0.5  # OK for no downsampling
+
+TRANSFORM_DOWNSAMPLED = AffineTransform2D()
+TRANSFORM_DOWNSAMPLED.translate([-0.5, -0.5])
+TRANSFORM_DOWNSAMPLED_INVERSE = TRANSFORM_DOWNSAMPLED.inverse()
 
 
 def get_distance(p_1, p_2):
@@ -650,7 +653,8 @@ class MagReorderer(object):
             ).getBounds()
             width = max(width, box.width)
             height = max(height, box.height)
-        self.highres_w = intr(Math.sqrt(width * height) * self.downsampling_factor * 2)
+        self.highres_w = 520
+        # self.highres_w = intr(Math.sqrt(width * height) * self.downsampling_factor * 2)
 
         # self.highres_w = intr(
         #    Math.sqrt(next(iter(self.wafer.rois.values()))[0].area)
@@ -855,7 +859,7 @@ class MagReorderer(object):
         self.align_sections()
         if self.user_params["export_highres"]:
             self.export_highres(annotation_types)
-        # self.show_roi_stack()
+        self.show_roi_stack()
         # self.show_straight_roi_stack()
 
     def extract_high_res_rois(self):
@@ -1080,6 +1084,11 @@ class MagReorderer(object):
 
         scale_upsampling = AffineTransform2D()
         scale_upsampling.scale(self.downsampling_factor)
+        # scale_upsampling = self.GC.change_basis(
+        #    scale_upsampling,
+        #    B=TRANSFORM_DOWNSAMPLED,
+        #    B_inverse=TRANSFORM_DOWNSAMPLED_INVERSE,
+        # )
         IJ.log("downsampling factor {}".format(self.downsampling_factor))
 
         translation_zero_to_half_highres_fov = AffineTransform2D()
@@ -1179,10 +1188,21 @@ class MagReorderer(object):
             )
             ROI_global_lowres_to_local_highres.preConcatenate(
                 scale_upsampling.inverse()
+                # self.GC.change_basis(
+                #    scale_upsampling.inverse(),
+                #    B=TRANSFORM_DOWNSAMPLED,
+                #    B_inverse=TRANSFORM_DOWNSAMPLED_INVERSE,
+                # )
+                # scale_upsampling
             )
             ROI_global_lowres_to_local_highres.preConcatenate(
                 translation_ROI_to_zero.inverse()
             )
+            # ROI_global_lowres_to_local_highres = self.GC.change_basis(
+            #    ROI_global_lowres_to_local_highres,
+            #    B=TRANSFORM_DOWNSAMPLED,
+            #    B_inverse=TRANSFORM_DOWNSAMPLED_INVERSE,
+            # )
             self.wafer.update_section(
                 k2,
                 ROI_global_lowres_to_local_highres,
@@ -1214,8 +1234,8 @@ class MagReorderer(object):
             centroid_highres = [self.downsampling_factor * v for v in section.centroid]
             im = open_subpixel_crop(
                 high_res_path,
-                centroid_highres[0] - halfsize + OFFSET_EXPORT_HIGHRES,
-                centroid_highres[1] - halfsize + OFFSET_EXPORT_HIGHRES,
+                centroid_highres[0] - halfsize,
+                centroid_highres[1] - halfsize,
                 2 * halfsize,
                 2 * halfsize,
                 self.user_params["channel"],
@@ -1226,6 +1246,13 @@ class MagReorderer(object):
             annotation_transform.preConcatenate(self.wafer.transforms[id_section])
             annotation_transform.preConcatenate(scale_upsampling)
             annotation_transform.preConcatenate(translate_half_window)
+
+            # seems to work also in downsampling context
+            annotation_transform = self.GC.change_basis(
+                annotation_transform,
+                B=TRANSFORM_DOWNSAMPLED,
+                B_inverse=TRANSFORM_DOWNSAMPLED_INVERSE,
+            )
 
             for annotation_type in annotation_types:
                 annotation = getattr(self.wafer, annotation_type.name).get(id_section)
@@ -1453,8 +1480,8 @@ def ordered_transformed_imgstack(
         transformed = RV.transform(
             Views.interpolate(
                 loaded_imgs[j],
-                # NLinearInterpolatorFactory(),
-                NearestNeighborInterpolatorFactory(),
+                NLinearInterpolatorFactory(),
+                # NearestNeighborInterpolatorFactory(),
             ),
             current_transform,
         )
