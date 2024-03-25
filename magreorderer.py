@@ -654,8 +654,10 @@ class MagReorderer(object):
             ).getBounds()
             width = max(width, box.width)
             height = max(height, box.height)
-        self.highres_w = 520
-        # self.highres_w = intr(Math.sqrt(width * height) * self.downsampling_factor * 2)
+        # self.highres_w = 520
+        self.highres_w = intr(
+            Math.sqrt(width * height) * self.downsampling_factor * 1.5
+        )
 
         # self.highres_w = intr(
         #    Math.sqrt(next(iter(self.wafer.rois.values()))[0].area)
