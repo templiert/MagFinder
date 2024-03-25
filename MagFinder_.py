@@ -2550,6 +2550,7 @@ if __name__ == "__main__":
             "[h] opens this help message",
             "[a] creates/modifies an annotation",
             "[t] toggles to global mode",
+            "[x] deletes the currently selected annotation",
             "[p] propagates the current annotation to sections defined in the dialog. Section and landmark annotations cannot be propagated",
             "[g]/[G] propagates all annotations of the current section to the next/previous serial section and moves to the next/previous serial section",
             "[q] quits. Everything will be saved",
