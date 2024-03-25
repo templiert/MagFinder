@@ -2,6 +2,7 @@
 Top-left of pixel is (0  , 0  )
 Center of pixel is   (0.5, 0.5)
 """
+
 from __future__ import with_statement
 
 import itertools
@@ -349,9 +350,11 @@ class Wafer(object):
                         self.add(
                             annotation_type,
                             self.GC.points_to_poly(points),
-                            (section_id, annotation_id)
-                            if annotation_type is AnnotationType.ROI
-                            else section_id,
+                            (
+                                (section_id, annotation_id)
+                                if annotation_type is AnnotationType.ROI
+                                else section_id
+                            ),
                         )
             elif header in ["serial_order", "stage_order"]:
                 if config.get(header, header) != "[]":
@@ -393,9 +396,11 @@ class Wafer(object):
             self.add(
                 annotation_type,
                 roi,
-                (section_id, annotation_id)
-                if annotation_type is AnnotationType.ROI
-                else section_id,
+                (
+                    (section_id, annotation_id)
+                    if annotation_type is AnnotationType.ROI
+                    else section_id
+                ),
             )
         self.clear_transforms()
         self.compute_transforms()
@@ -651,33 +656,51 @@ class Wafer(object):
                                 self.sections[section_id].centroid[0],
                                 self.sections[section_id].centroid[1],
                                 self.sections[section_id].angle,
-                                self.rois[section_id][0].centroid[0]
-                                if section_id in self.rois.keys()
-                                else "",
-                                self.rois[section_id][0].centroid[1]
-                                if section_id in self.rois.keys()
-                                else "",
-                                self.rois[section_id][0].angle
-                                if section_id in self.rois.keys()
-                                else "",
-                                self.magnets[section_id].centroid[0]
-                                if section_id in self.magnets.keys()
-                                else "",
-                                self.magnets[section_id].centroid[1]
-                                if section_id in self.magnets.keys()
-                                else "",
-                                self.landmarks[id].centroid[0]
-                                if id in self.landmarks.keys()
-                                else "",
-                                self.landmarks[id].centroid[1]
-                                if id in self.landmarks.keys()
-                                else "",
-                                self.stage_order[id]
-                                if len(self.stage_order) > id
-                                else "",
-                                self.serial_order[id]
-                                if len(self.serial_order) > id
-                                else "",
+                                (
+                                    self.rois[section_id][0].centroid[0]
+                                    if section_id in self.rois.keys()
+                                    else ""
+                                ),
+                                (
+                                    self.rois[section_id][0].centroid[1]
+                                    if section_id in self.rois.keys()
+                                    else ""
+                                ),
+                                (
+                                    self.rois[section_id][0].angle
+                                    if section_id in self.rois.keys()
+                                    else ""
+                                ),
+                                (
+                                    self.magnets[section_id].centroid[0]
+                                    if section_id in self.magnets.keys()
+                                    else ""
+                                ),
+                                (
+                                    self.magnets[section_id].centroid[1]
+                                    if section_id in self.magnets.keys()
+                                    else ""
+                                ),
+                                (
+                                    self.landmarks[id].centroid[0]
+                                    if id in self.landmarks.keys()
+                                    else ""
+                                ),
+                                (
+                                    self.landmarks[id].centroid[1]
+                                    if id in self.landmarks.keys()
+                                    else ""
+                                ),
+                                (
+                                    self.stage_order[id]
+                                    if len(self.stage_order) > id
+                                    else ""
+                                ),
+                                (
+                                    self.serial_order[id]
+                                    if len(self.serial_order) > id
+                                    else ""
+                                ),
                             ]
                         ],
                     )
@@ -779,7 +802,7 @@ class Wafer(object):
                 RV.transform(
                     Views.interpolate(
                         Views.extendZero(self.img_global),
-                        NLinearInterpolatorFactory()
+                        NLinearInterpolatorFactory(),
                         # NearestNeighborInterpolatorFactory(),
                     ),
                     transforms[o],
@@ -1832,9 +1855,13 @@ class KeyListener(KeyAdapter):
         set_roi_and_update_roi_manager(
             0
             if keycode == KeyEvent.VK_E
-            else self.manager.getCount() - 1
-            if not shift
-            else get_roi_index_from_name(str(wafer.sections[wafer.serial_order[-1]]))
+            else (
+                self.manager.getCount() - 1
+                if not shift
+                else get_roi_index_from_name(
+                    str(wafer.sections[wafer.serial_order[-1]])
+                )
+            )
         )
 
     def handle_key_a(self):
@@ -2074,9 +2101,11 @@ class KeyListener(KeyAdapter):
                 self.wafer.add(
                     annotation_type,
                     GeometryCalculator.points_to_poly(propagated_points),
-                    (input_index, annotation_id)
-                    if annotation_type is AnnotationType.ROI
-                    else input_index,
+                    (
+                        (input_index, annotation_id)
+                        if annotation_type is AnnotationType.ROI
+                        else input_index
+                    ),
                 )
         self.wafer.wafer_to_manager()
 

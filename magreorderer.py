@@ -10,6 +10,7 @@ Notes:
     key       -> continuous happens when extracting high res rois: "roi_{:04}.tif".format(id_enumerate),
     continous -> key        happens when assigning the wafer.serial_order: self.wafer.serial_order = [sorted_section_keys[o] for o in order]
 """
+
 import importlib
 import io.scif.img.ImgOpener
 import itertools
@@ -894,9 +895,11 @@ class MagReorderer(object):
                     highres_path=self.image_path,
                     highres_w=self.highres_w,
                     highres_centroid=highres_centroid,
-                    channel=self.user_params["channel"]
-                    if self.user_params["multichannel"]
-                    else None,
+                    channel=(
+                        self.user_params["channel"]
+                        if self.user_params["multichannel"]
+                        else None
+                    ),
                 )
             )
         # # TODO something failing when using in parallel
