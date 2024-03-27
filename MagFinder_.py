@@ -18,7 +18,7 @@ import jarray
 import java
 from fiji.util.gui import GenericDialogPlus
 from ij import IJ, ImagePlus, ImageStack, WindowManager
-from ij.gui import GenericDialog, PointRoi, PolygonRoi
+from ij.gui import GenericDialog, OvalRoi, PointRoi, PolygonRoi, Roi
 from ij.io import DirectoryChooser
 from ij.plugin import MontageMaker
 from ij.plugin.frame import RoiManager
@@ -1222,6 +1222,38 @@ class Wafer(object):
         )
         dlog("The section has been pushed to the {} section".format(direction))
 
+    def create_global_magnet_stack(self):
+        SIZE = 200
+        SIZE_CIRCLE = 10  # keep it even
+        folder_magnet_export = mkdir_p(os.path.join(self.root, "magnet_export"))
+        path_ids_slab_stage = os.path.join(self.root, "ids_slab_stage.txt")
+        with open(path_ids_slab_stage, "r") as f:
+            ids_slab_stage = [int(line) for line in f.readlines()]
+        ip = self.image_global.getProcessor()
+        for id_enum, id_slab_stage in enumerate(ids_slab_stage):
+            xy = self.magnets[id_slab_stage].centroid
+            top_left = [intr(xy[0] - 0.5 * SIZE), intr(xy[1] - 0.5 * SIZE)]
+            roi_magnet = Roi(top_left[0], top_left[1], SIZE, SIZE)
+            ip.setRoi(roi_magnet)
+            id_string = "slab_{:04}".format(id_slab_stage)
+            crop = ImagePlus(id_string, ip.crop())
+            circle = OvalRoi(
+                int(xy[0] - top_left[0] - 0.5 * SIZE_CIRCLE),
+                int(xy[1] - top_left[1] - 0.5 * SIZE_CIRCLE),
+                SIZE_CIRCLE,
+                SIZE_CIRCLE,
+            )
+            circle.setHandleSize(1)
+            circle.setStrokeWidth(0.3)
+            crop.setRoi(circle)
+            crop = crop.flatten()
+            IJ.save(
+                crop,
+                os.path.join(
+                    folder_magnet_export, "{:04}_{}.png".format(id_enum, id_string)
+                ),
+            )
+
 
 class Annotation(object):
     def __init__(self, annotation_type, poly, id_):
@@ -1691,6 +1723,8 @@ class KeyListener(KeyAdapter):
             if not user_confirmation("reverse the serial order"):
                 return
             self.wafer.serial_order = self.wafer.serial_order[::-1]
+        if keycode == KeyEvent.VK_B:
+            self.wafer.create_global_magnet_stack()
 
     def handle_key_m_global(self):
         """Saves overview"""
@@ -2446,6 +2480,7 @@ if __name__ == "__main__":
             "[m] exports a summary image of global mode",
             "[n] renumbers the sections to have continuous numbers without gaps (0,1,3,4,6 --> 0,1,2,3,4)",
             "[k] transfers annotations from a source wafer into this currently open target wafer (using landmarks for the transform)",
+            "[b] exports global magnet stack given slab ids",
             (
                 "[o]   (letter o) computes the section order that minimizes the travel of the microscope stage"
                 " (not the same as the serial sectioning order of the sections)."
