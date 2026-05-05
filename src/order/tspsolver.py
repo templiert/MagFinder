@@ -26,7 +26,7 @@ _LINKERN_EXE = "linkern.exe"
 _LINKERN_URL = _TSP_ROOT_URL + "/{}.gz".format(_LINKERN_EXE)
 
 _CYGWINDLL_URL = (
-    r"https://raw.githubusercontent.com/templiert/MagFinder/master/cygwin1.dll"
+    r"https://raw.githubusercontent.com/templiert/MagFinder/v1.0.0/cygwin1.dll"
 )
 _DOWNLOAD_MSG = (
     "Downloading {} to the Fiji plugins directory from \n \n{}\n \n"
