@@ -106,14 +106,12 @@ magc
             'polygon': [[x1,y1],...,[xn,yn]]
             'center': [x,y]
             'area': x (pixel)
-            'compression': x
         .   'angle': x (degree)
         :
         n
     'rois'
         1 # section id
             1 # roi id (multiple rois per section)
-                'template': x
                 'polygon': [[x1,y1],...,[xn,yn]]
                 'center': [x,y]
                 'area': x (pixel)
@@ -124,23 +122,16 @@ magc
         n
     'magnets'
         1
-            'template': x
         .   'location': [x,y]
         :
         n
     'focus'
         1
-            'template': x
         .   'polygon': [[x1,y1],...,[xn,yn]]
         :
         n
-    'landmarksEM'
+    'landmarks'
         'source'
-            1: [x,y]
-            .
-            :
-            n: [x,y]
-        'target'
             1: [x,y]
             .
             :
@@ -149,6 +140,8 @@ magc
 'stage_order': [x1,...,xn]
 """
 
-magc_path = xxx
-magc = read_magc(magc_path)
-print(f"{magc=}")
+if __name__ == "__main__":
+    import sys
+
+    magc = read_magc(sys.argv[1])
+    print(f"{magc=}")
